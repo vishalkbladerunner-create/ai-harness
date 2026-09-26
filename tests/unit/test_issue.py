@@ -57,3 +57,22 @@ def test_load_issue_from_stdin_text():
 def test_load_issue_requires_input():
     with pytest.raises(ValueError):
         load_issue(None, stdin_text="   ")
+
+
+def test_parses_repo_reference_and_absolute_paths():
+    issue = parse_issue("Repo: acme/widgets\nFix /tmp/target-repo/app.py\n", source="unit")
+    assert issue.repo_url == "https://github.com/acme/widgets"
+    assert "/tmp/target-repo/app.py" in issue.absolute_paths
+
+
+def test_repo_url_from_issue_link_and_url_paths_ignored():
+    issue = parse_issue("See https://github.com/acme/widgets/issues/42 for details", source="unit")
+    assert issue.repo_url == "https://github.com/acme/widgets"
+    # path segments of the URL must not be mistaken for filesystem paths
+    assert not any(path.startswith("/acme") for path in issue.absolute_paths)
+
+
+def test_repo_url_is_not_a_workspace_hint():
+    issue = parse_issue("Repo: https://github.com/acme/widgets\n", source="unit")
+    assert issue.repo_url == "https://github.com/acme/widgets"
+    assert issue.workspace_hint == ""

@@ -23,6 +23,13 @@ PATH_RE = re.compile(
 IDENT_RE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]{2,})\s*\(")
 TEST_RE = re.compile(r"\b(test_[A-Za-z0-9_]+|[A-Za-z0-9_]+_test)\b")
 NUM_RE = re.compile(r"\b(?:line|ln)\s*(\d{1,6})\b", re.IGNORECASE)
+#: GitHub repository references (URL or an explicit ``Repo: owner/name`` line).
+GITHUB_URL_RE = re.compile(r"https?://github\.com/([\w.-]+)/([\w.-]+?)(?:\.git)?(?=[/\s#?]|$)", re.IGNORECASE)
+REPO_LINE_RE = re.compile(
+    r"(?im)^\s*(?:repo(?:sitory)?|project)\s*:\s*(?:https?://github\.com/)?([\w.-]+/[\w.-]+?)(?:\.git)?\s*$"
+)
+#: Absolute filesystem paths mentioned in the issue (URLs are stripped first).
+ABS_PATH_RE = re.compile(r"(?<![\w.-])(/(?:[\w.@+-]+/)*[\w.@+-]+)")
 
 
 @dataclass
@@ -37,6 +44,8 @@ class Issue:
     tests: list[str] = field(default_factory=list)
     line_hints: list[int] = field(default_factory=list)
     workspace_hint: str = ""
+    repo_url: str = ""
+    absolute_paths: list[str] = field(default_factory=list)
 
     def metadata_markdown(self) -> str:
         lines = [
@@ -53,6 +62,8 @@ class Issue:
         ):
             if values:
                 lines.append(f"- {label}: {', '.join(values[:12])}")
+        if self.repo_url:
+            lines.append(f"- repository: {self.repo_url}")
         return "\n".join(lines)
 
     def scope_terms(self) -> list[str]:
@@ -79,6 +90,7 @@ class Issue:
             "tests": self.tests,
             "line_hints": self.line_hints,
             "workspace_hint": self.workspace_hint,
+            "repo_url": self.repo_url,
         }
 
 
@@ -105,6 +117,8 @@ def parse_issue(text: str, source: str = "stdin") -> Issue:
         if value not in issue.line_hints:
             issue.line_hints.append(value)
     issue.workspace_hint = _workspace_hint(text)
+    issue.repo_url = _repo_reference(text)
+    issue.absolute_paths = _absolute_paths(text)
     return issue
 
 
@@ -140,3 +154,25 @@ def _workspace_hint(text: str) -> str:
     if candidate.startswith("/") or candidate.startswith("~") or candidate.startswith("./"):
         return candidate
     return ""
+
+
+def _repo_reference(text: str) -> str:
+    """GitHub repository named by the issue (URL or ``Repo: owner/name`` line)."""
+    line = REPO_LINE_RE.search(text)
+    if line:
+        return f"https://github.com/{line.group(1)}"
+    url = GITHUB_URL_RE.search(text)
+    if url:
+        return f"https://github.com/{url.group(1)}/{url.group(2)}"
+    return ""
+
+
+def _absolute_paths(text: str) -> list[str]:
+    """Absolute filesystem paths mentioned in the issue (URLs excluded)."""
+    cleaned = re.sub(r"https?://\S+", " ", text)
+    found: list[str] = []
+    for match in ABS_PATH_RE.finditer(cleaned):
+        path = match.group(1).rstrip("/")
+        if path and path not in found:
+            found.append(path)
+    return found

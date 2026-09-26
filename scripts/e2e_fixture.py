@@ -91,9 +91,8 @@ def main() -> int:
     args = parser.parse_args()
 
     if args.mode == "live":
-        missing = [k for k in ("AI_API_KEY", "MODEL_BASE_URL", "MODEL_NAME") if not os.environ.get(k)]
-        if missing:
-            print(f"[e2e] SKIP: live mode requires {', '.join(missing)}")
+        if not os.environ.get("AI_API_KEY"):
+            print("[e2e] SKIP: live mode requires AI_API_KEY")
             return 2
     if not shutil.which("git"):
         print("[e2e] SKIP: git is required for the fixture workspace")

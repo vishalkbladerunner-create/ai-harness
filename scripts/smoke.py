@@ -40,10 +40,9 @@ def main() -> int:
     parser.add_argument("--keep", action="store_true")
     args = parser.parse_args()
 
-    missing = [k for k in ("AI_API_KEY", "MODEL_BASE_URL", "MODEL_NAME") if not os.environ.get(k)]
-    if missing:
-        print(f"[smoke] CANNOT RUN: missing {', '.join(missing)} in the environment.")
-        print("[smoke] Export them (values are never written to disk) and retry: make smoke")
+    if not os.environ.get("AI_API_KEY"):
+        print("[smoke] CANNOT RUN: missing AI_API_KEY in the environment.")
+        print("[smoke] Export the evaluator credential (never written to disk) and retry: make smoke")
         return 2
 
     tmp = Path(tempfile.mkdtemp(prefix="guarded-mini-smoke-"))

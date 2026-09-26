@@ -3,9 +3,12 @@
 #
 # Evaluator workflow (must work unmodified):
 #   git clone <this repo> && cd <repo>
-#   export AI_API_KEY ...; export MODEL_BASE_URL ...; export MODEL_NAME ...
+#   export AI_API_KEY=...        # the only variable the committee exports
 #   make setup
 #   make run            # task arrives on stdin (or ISSUE=path)
+#
+# MODEL_BASE_URL / MODEL_NAME are optional: checked-in provider defaults
+# (DeepSeek then Qwen) are used when they are absent.
 #
 # Design rules honoured here:
 #   * No secret material in this file. Credentials are only ever read from the
@@ -40,6 +43,7 @@ help:
 	@echo "  make setup     create .venv, install pinned mini-swe-agent (vendored) + deps,"
 	@echo "                 install laya + checkpoint (both NON-FATAL, cached)"
 	@echo "  make run       run our entrypoint against a task (stdin or ISSUE=path)"
+	@echo "                 (only AI_API_KEY is required; MODEL_BASE_URL/MODEL_NAME optional)"
 	@echo "  make test      unit tests + dry-run E2E on the fixture repo (no API calls),"
 	@echo "                 plus live E2E when creds are present"
 	@echo "  make test-live force the live eval against tests/fixture-repo (needs creds)"

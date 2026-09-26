@@ -34,7 +34,11 @@ PROMPTS_DIR = CONFIG_DIR / "prompts"
 #: Upstream config whose templates we extend. Vendored, read-only.
 UPSTREAM_CONFIG = Path(builtin_config_dir) / "mini.yaml"
 
-REQUIRED_ENV = ("AI_API_KEY", "MODEL_BASE_URL", "MODEL_NAME")
+#: The evaluator supplies exactly one credential at runtime. Endpoint and model
+#: name are optional: checked-in `model.provider_defaults` (harness.yaml) are used
+#: when they are absent, so `export AI_API_KEY=... && make run` works untouched.
+REQUIRED_ENV = ("AI_API_KEY",)
+OPTIONAL_ENV = ("MODEL_BASE_URL", "MODEL_NAME")
 
 
 class ConfigError(RuntimeError):
@@ -93,16 +97,17 @@ def load_compaction_config() -> dict:
 
 
 def read_env() -> dict[str, str]:
-    """Read the evaluation environment variables. Returned, never written to disk."""
-    missing = [name for name in REQUIRED_ENV if not os.environ.get(name)]
-    if missing:
+    """Read the evaluation environment variables. Returned, never written to disk.
+
+    Only ``AI_API_KEY`` is required (that is what the committee exports). The
+    endpoint/model variables are optional and fall back to checked-in defaults.
+    """
+    if not os.environ.get("AI_API_KEY"):
         raise ConfigError(
-            "missing required environment variable(s): "
-            + ", ".join(missing)
-            + ". Export AI_API_KEY, MODEL_BASE_URL and MODEL_NAME before running "
-            "(see README 'Running the harness'). Values are never written to disk."
+            "missing required environment variable: AI_API_KEY. Export the credential provided by "
+            "the evaluator before running (see README 'Quickstart'); its value is never written to disk."
         )
-    return {name: os.environ[name] for name in REQUIRED_ENV}
+    return {name: os.environ.get(name, "") for name in REQUIRED_ENV + OPTIONAL_ENV}
 
 
 def openai_compatible_model_name(model_name: str) -> str:
@@ -117,13 +122,76 @@ def openai_compatible_model_name(model_name: str) -> str:
     return f"openai/{name}"
 
 
+def _default_providers(config: dict) -> list[dict]:
+    """Checked-in provider defaults from harness.yaml (never secrets)."""
+    entries = ((config.get("model") or {}).get("provider_defaults")) or []
+    return [
+        {"base_url": str(entry.get("base_url", "")).strip(), "model_name": str(entry.get("model_name", "")).strip()}
+        for entry in entries
+        if entry.get("base_url") and entry.get("model_name")
+    ]
+
+
+def _infer_provider(text: str, defaults: list[dict]) -> dict | None:
+    """Pick a default provider from a model name or base URL (qwen vs deepseek)."""
+    low = (text or "").lower()
+    for needle in ("qwen", "dashscope", "aliyun"):
+        if needle in low:
+            return next((d for d in defaults if "qwen" in d["model_name"].lower()), None)
+    if "deepseek" in low:
+        return next((d for d in defaults if "deepseek" in d["model_name"].lower()), None)
+    return None
+
+
+def provider_chain(config: dict, env: dict[str, str]) -> list[dict]:
+    """Resolve the provider chain: explicit env wins, defaults otherwise.
+
+    * ``MODEL_BASE_URL`` + ``MODEL_NAME`` both set -> exactly that endpoint
+      (no fallback: the prescribed model is respected verbatim).
+    * only one of them set -> the other is inferred from the checked-in
+      defaults (e.g. ``MODEL_NAME=qwen-max`` picks the DashScope URL).
+    * neither set -> the checked-in chain (DeepSeek first, then Qwen). The key
+      only authenticates against its own provider, so the harness discovers the
+      right one instead of failing on a 401; this is provider discovery, not
+      model substitution, and it is disabled whenever the evaluator is explicit.
+    """
+    defaults = _default_providers(config)
+    base_url = (env.get("MODEL_BASE_URL") or "").strip()
+    model_name = (env.get("MODEL_NAME") or "").strip()
+    if base_url and model_name:
+        return [{"base_url": base_url, "model_name": model_name}]
+    if model_name:
+        inferred = _infer_provider(model_name, defaults)
+        if inferred is None and defaults:
+            inferred = defaults[0]
+        if inferred is None:
+            raise ConfigError("MODEL_NAME is set but no endpoint is known; set MODEL_BASE_URL as well")
+        return [{"base_url": inferred["base_url"], "model_name": model_name}]
+    if base_url:
+        inferred = _infer_provider(base_url, defaults)
+        if inferred is None and defaults:
+            inferred = defaults[0]
+        if inferred is None:
+            raise ConfigError("MODEL_BASE_URL is set but no model name is known; set MODEL_NAME as well")
+        return [{"base_url": base_url, "model_name": inferred["model_name"]}]
+    if not defaults:
+        raise ConfigError(
+            "no model endpoint configured: export MODEL_BASE_URL and MODEL_NAME, or add "
+            "model.provider_defaults to harness/config/harness.yaml"
+        )
+    return defaults
+
+
 def build_model_config(config: dict, env: dict[str, str]) -> dict:
     """Assemble the kwargs for our model wrapper. Secret values stay in memory."""
     model_cfg = copy.deepcopy(config.get("model") or {})
     model_kwargs = dict(model_cfg.pop("model_kwargs", {}) or {})
+    model_kwargs.pop("provider_defaults", None)
+    chain = provider_chain(config, env)
+    primary, fallbacks = chain[0], chain[1:]
     model_kwargs.update(
         {
-            "api_base": env["MODEL_BASE_URL"],
+            "api_base": primary["base_url"],
             "api_key": env["AI_API_KEY"],
         }
     )
@@ -131,9 +199,13 @@ def build_model_config(config: dict, env: dict[str, str]) -> dict:
     if request_timeout is not None:
         model_kwargs.setdefault("timeout", request_timeout)
     return {
-        "model_name": openai_compatible_model_name(env["MODEL_NAME"]),
+        "model_name": openai_compatible_model_name(primary["model_name"]),
         "model_kwargs": model_kwargs,
         "cost_tracking": model_cfg.get("cost_tracking", "ignore_errors"),
+        "provider_chain": [
+            {"model_name": openai_compatible_model_name(entry["model_name"]), "base_url": entry["base_url"]}
+            for entry in fallbacks
+        ],
     }
 
 

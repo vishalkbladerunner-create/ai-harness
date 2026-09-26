@@ -26,7 +26,7 @@ from pathlib import Path
 from minisweagent.agents.default import AgentConfig
 from minisweagent.exceptions import LimitsExceeded
 
-from harness import UPSTREAM_COMMIT, __version__
+from harness import HARNESS_NAME, UPSTREAM_COMMIT, __version__
 from harness.agent import HarnessAgent
 from harness.budget import Budget, BudgetTracker
 from harness.compaction.compactor import Compactor
@@ -113,26 +113,93 @@ def looks_like_harness_repo(path: Path) -> bool:
     return all((path / marker).exists() for marker in HARNESS_REPO_MARKERS)
 
 
-def resolve_workspace(explicit: str | None, issue: Issue, force: bool = False) -> Path:
-    """Pick the repo to operate on, and refuse to operate on ourselves."""
-    candidate: Path | None = None
-    if explicit:
-        candidate = Path(explicit).expanduser()
-    elif issue.workspace_hint:
-        candidate = Path(issue.workspace_hint).expanduser()
-    else:
-        candidate = Path.cwd()
-    candidate = candidate.resolve()
-    if not candidate.is_dir():
-        raise UsageError(f"workspace is not a directory: {candidate}")
-    if looks_like_harness_repo(candidate) and not force:
-        raise UsageError(
-            f"workspace {candidate} is the guarded-mini repo itself. Refusing to modify our own "
-            "checkout. Point it at the target repository instead, e.g.\n"
-            f"    make run WORKSPACE=/path/to/target-repo < issue.md\n"
-            "or pass --force if you really mean it."
+CLONE_TIMEOUT_S = 300
+
+
+def _clone_workspace(repo_url: str) -> Path | None:
+    """Clone the repository named by the issue into the project-local cache.
+
+    Used only when no workspace was otherwise resolved (no WORKSPACE, no
+    ``Workspace:`` hint, no existing checkout in the issue). Failure is not
+    fatal: the caller falls back to the current directory with a warning.
+    """
+    slug = re.sub(r"[^A-Za-z0-9._-]+", "-", re.sub(r"^https?://github\.com/", "", repo_url).rstrip("/"))
+    slug = slug.strip("-") or "target"
+    destination = REPO_ROOT / ".cache" / "workspaces" / slug
+    if (destination / ".git").exists():
+        print(f"[{HARNESS_NAME}] reusing cloned workspace {destination}", file=sys.stderr)
+        return destination
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if destination.exists():
+        shutil.rmtree(destination, ignore_errors=True)
+    try:
+        proc = subprocess.run(
+            ["git", "clone", "--depth", "1", repo_url, str(destination)],
+            capture_output=True,
+            text=True,
+            timeout=CLONE_TIMEOUT_S,
         )
-    return candidate
+    except Exception as exc:
+        print(f"[{HARNESS_NAME}] could not clone {repo_url}: {type(exc).__name__}", file=sys.stderr)
+        return None
+    if proc.returncode != 0 or not (destination / ".git").exists():
+        shutil.rmtree(destination, ignore_errors=True)
+        print(f"[{HARNESS_NAME}] could not clone {repo_url} (git exit {proc.returncode})", file=sys.stderr)
+        return None
+    print(f"[{HARNESS_NAME}] cloned issue repository into {destination}", file=sys.stderr)
+    return destination
+
+
+def resolve_workspace(explicit: str | None, issue: Issue, force: bool = False) -> Path:
+    """Pick the repo to operate on.
+
+    Resolution order (first hit wins):
+      1. explicit ``--workspace`` / ``WORKSPACE`` / ``HARNESS_WORKSPACE``
+      2. ``Workspace:``/``Repo: <path>`` hint in the issue text
+      3. an existing git checkout whose absolute path is named in the issue
+      4. the current directory (the evaluator may run the harness inside the target)
+      5. the GitHub repository named by the issue (cloned into ``.cache/workspaces``)
+      6. the current directory with a warning — ``make run`` must never refuse to launch.
+    """
+    if explicit:
+        candidate = Path(explicit).expanduser().resolve()
+        if not candidate.is_dir():
+            raise UsageError(f"workspace is not a directory: {candidate}")
+        if looks_like_harness_repo(candidate) and not force:
+            raise UsageError(
+                f"workspace {candidate} is the guarded-mini repo itself. Refusing to modify our own "
+                "checkout. Point it at the target repository instead, e.g.\n"
+                f"    make run WORKSPACE=/path/to/target-repo < issue.md\n"
+                "or pass --force if you really mean it."
+            )
+        return candidate
+    if issue.workspace_hint:
+        candidate = Path(issue.workspace_hint).expanduser().resolve()
+        if not candidate.is_dir():
+            raise UsageError(f"issue workspace hint is not a directory: {candidate}")
+        return candidate
+    for raw in issue.absolute_paths:
+        try:
+            candidate = Path(raw).expanduser().resolve()
+        except OSError:
+            continue
+        if candidate.is_dir() and (candidate / ".git").exists() and not looks_like_harness_repo(candidate):
+            print(f"[{HARNESS_NAME}] using git checkout named in the issue: {candidate}", file=sys.stderr)
+            return candidate
+    cwd = Path.cwd().resolve()
+    if not looks_like_harness_repo(cwd) or force:
+        return cwd
+    if issue.repo_url:
+        cloned = _clone_workspace(issue.repo_url)
+        if cloned is not None:
+            return cloned
+    print(
+        f"[{HARNESS_NAME}] warning: no target workspace was given and the current directory is the "
+        "harness checkout. Running on the current directory; pass WORKSPACE=<target-repo> (or put "
+        "'Workspace: /path' in the issue) to point the harness at the repository under test.",
+        file=sys.stderr,
+    )
+    return cwd
 
 
 # --------------------------------------------------------------------------
@@ -471,6 +538,9 @@ def execute_run(options: RunOptions, telemetry: Telemetry | None = None, on_read
         telemetry.emit("patch_exclusions", paths=excluded_from_patch)
 
     duration = round(time.time() - started, 1)
+    # The report must name the provider that actually served the run: the
+    # DeepSeek/Qwen discovery fallback can switch mid-run.
+    model_name = getattr(model, "active_model_name", None) or model_name
     cost_total = sum(float(e.get("cost") or 0.0) for e in telemetry.events_of("model_call"))
     stats = {
         **budget_tracker.state.snapshot(budget),

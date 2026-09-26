@@ -34,6 +34,31 @@ def test_rejects_missing_workspace(tmp_path):
         resolve_workspace(str(tmp_path / "nope"), parse_issue("fix"))
 
 
+def test_default_cwd_harness_repo_warns_but_returns(monkeypatch, capsys):
+    monkeypatch.chdir(REPO_ROOT)
+    resolved = resolve_workspace(None, parse_issue("fix something", source="unit"))
+    assert resolved == REPO_ROOT
+    assert "warning" in capsys.readouterr().err.lower()
+
+
+def test_absolute_git_dir_named_in_issue_is_used(tmp_path, monkeypatch):
+    target = tmp_path / "target-repo"
+    target.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=target, check=True)
+    monkeypatch.chdir(REPO_ROOT)
+    issue = parse_issue(f"Fix the failing test in {target}", source="unit")
+    assert resolve_workspace(None, issue) == target.resolve()
+
+
+def test_repo_url_is_cloned_when_no_workspace(tmp_path, monkeypatch):
+    cloned = tmp_path / "cloned"
+    cloned.mkdir()
+    monkeypatch.setattr("harness.run._clone_workspace", lambda url: cloned)
+    monkeypatch.chdir(REPO_ROOT)
+    issue = parse_issue("Repo: acme/widgets\nFix the failing test", source="unit")
+    assert resolve_workspace(None, issue) == cloned
+
+
 def make_git_workspace(tmp_path: Path) -> Path:
     ws = tmp_path / "ws"
     ws.mkdir()

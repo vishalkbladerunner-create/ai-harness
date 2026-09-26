@@ -67,8 +67,9 @@ make run
 
 ## 3. Our interception points, in execution order
 
-1. **Build time** — `harness/run.execute_run`: workspace guard (`resolve_workspace` refuses the harness
-   repo itself), run directory, telemetry, repo map, budget, prompts, model, environment, agent.
+1. **Build time** — `harness/run.execute_run`: workspace guard (`resolve_workspace` resolves
+   WORKSPACE → issue hint → issue checkout → cwd → repo named in the issue), run directory,
+   telemetry, repo map, budget, prompts, model (provider discovery), environment, agent.
 2. **`HarnessModel.query`** (`harness/model.py`): calls upstream, then normalises `usage` onto
    `message.extra.harness_usage`, emits a `model_call` event, and falls back once if the endpoint
    rejects `seed`/`temperature`/`max_tokens` (recording a degradation).
@@ -188,7 +189,7 @@ list. Its evidence (the fixture study) is in the README appendix; live is only e
 
 | check | command | result |
 |---|---|---|
-| unit + mock E2E | `make test` | 129 passed; fixture E2E PASS (submitted / tests pass / report / patch / telemetry / no credential in artefacts) |
+| unit + mock E2E | `make test` | 145 passed; fixture E2E PASS (submitted / tests pass / report / patch / telemetry / no credential in artefacts) |
 | vendored-core purity | `make check-upstream` | `vendored core == upstream v2.4.6 (byte-identical)` |
 | fresh copy, degraded path | `scripts/clean_env_check.sh --skip-laya` | `make setup` + `make test` PASS (heuristic judge, no laya) |
 | fresh copy, full path | `scripts/clean_env_check.sh` | `make setup` (laya install + checkpoint) + `make test` PASS |

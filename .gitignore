@@ -23,6 +23,10 @@ reports/*
 !reports/.gitkeep
 !reports/EXAMPLE/
 
+# Local config overrides (developer machine only)
+harness/config/*.local.yaml
+harness/config/*.local.yml
+
 # Cached laya checkpoint + HF cache (large, environment-local)
 harness/checkpoints/
 .cache/

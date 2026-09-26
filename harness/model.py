@@ -99,10 +99,37 @@ def extract_usage(message: dict) -> dict:
 class HarnessModel(LitellmModel):
     """Additive wrapper: telemetry, usage normalisation, one-shot param fallback."""
 
-    def __init__(self, *, telemetry=None, **kwargs):
+    def __init__(self, *, telemetry=None, provider_chain=None, **kwargs):
         self._telemetry = telemetry
         self._degradations: list[str] = []
+        self._provider_chain = [dict(entry) for entry in (provider_chain or [])]
         super().__init__(**kwargs)
+        self.active_model_name = self.config.model_name
+        self.active_base_url = str((self.config.model_kwargs or {}).get("api_base", ""))
+
+    # -- provider discovery: the evaluator's key may belong to DeepSeek or Qwen --
+    def _try_next_provider(self, reason: str) -> bool:
+        """Switch to the next checked-in provider. Returns False when exhausted."""
+        if not self._provider_chain:
+            return False
+        entry = self._provider_chain.pop(0)
+        previous = self.active_model_name
+        self.config.model_name = entry["model_name"]
+        self.config.model_kwargs["api_base"] = entry["base_url"]
+        self.active_model_name = entry["model_name"]
+        self.active_base_url = entry["base_url"]
+        if self._telemetry is not None:
+            self._telemetry.emit(
+                "provider_fallback",
+                reason=reason,
+                previous_model=previous,
+                model=self.active_model_name,
+                base_url=self.active_base_url,
+            )
+            self._telemetry.degrade(
+                "model", f"{reason} on {previous}; switched to {self.active_model_name} (provider discovery)"
+            )
+        return True
 
     # -- fallback: server rejects pinned sampling params --------------------
     def _query(self, messages: list[dict], **kwargs):
@@ -145,12 +172,18 @@ class HarnessModel(LitellmModel):
                     format_error=True,
                 )
             raise
-        except litellm.exceptions.AuthenticationError:
-            # Never echo key material in an error path.
-            raise RuntimeError(
-                "model endpoint rejected the credential (AuthenticationError). "
-                "Check that AI_API_KEY matches MODEL_BASE_URL; the value is never logged."
-            ) from None
+        except (litellm.exceptions.AuthenticationError, litellm.exceptions.NotFoundError) as exc:
+            # The evaluator's key may belong to the other provider; try the next
+            # checked-in default (empty when MODEL_BASE_URL/MODEL_NAME were explicit).
+            if self._try_next_provider(type(exc).__name__):
+                return self.query(messages, **kwargs)
+            if isinstance(exc, litellm.exceptions.AuthenticationError):
+                # Never echo key material in an error path.
+                raise RuntimeError(
+                    "model endpoint rejected the credential (AuthenticationError). "
+                    "Check that AI_API_KEY matches MODEL_BASE_URL; the value is never logged."
+                ) from None
+            raise
         usage = extract_usage(message)
         message.setdefault("extra", {})["harness_usage"] = usage
         if self._telemetry is not None:

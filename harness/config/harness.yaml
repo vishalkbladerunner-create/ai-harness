@@ -22,6 +22,15 @@ agent:
   cost_limit: 0.0
 
 model:
+  # Provider defaults used when the evaluator exports only AI_API_KEY (the
+  # committee's documented workflow). Explicit MODEL_BASE_URL / MODEL_NAME always
+  # take precedence and disable the fallback. This is provider discovery, not
+  # model substitution: a key only authenticates against its own provider.
+  provider_defaults:
+    - base_url: https://api.deepseek.com/v1
+      model_name: deepseek-chat
+    - base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+      model_name: qwen-plus
   # Appended to whatever model_kwargs the entrypoint builds at runtime.
   # temperature/seed are the pinned values requested by rule 9.
   model_kwargs:

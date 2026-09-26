@@ -42,17 +42,33 @@ decision is auditable in the run report.
 ```sh
 git clone <this repo> && cd <repo>
 
-export AI_API_KEY=...          # provided by the evaluator
-export MODEL_BASE_URL=...      # OpenAI-compatible base URL
-export MODEL_NAME=...          # e.g. deepseek-chat or qwen-max
+export AI_API_KEY=...          # REQUIRED — the only variable the committee exports
 
 make setup                     # venv + pinned core + harness + laya (laya is optional)
 make run < issue.md            # or: make run ISSUE=issue.md
 ```
 
-`make run` launches **our** entrypoint (`harness.entrypoint`), never the stock `mini` CLI. The task is
-read from stdin or `--issue FILE`; the target repository is the current directory, `$WORKSPACE`, or
-`--workspace PATH`:
+`AI_API_KEY` is read from the environment at runtime and **never written to disk** (the
+report, telemetry and trajectory are all masked; the fixture E2E asserts it).
+
+`MODEL_BASE_URL` and `MODEL_NAME` are **optional**. With only the key, the harness uses the
+checked-in provider defaults — DeepSeek `deepseek-chat` first, then Qwen `qwen-plus`
+(DashScope compatible endpoint) — and, if the key belongs to the other provider, switches
+once on the 401 and records a `provider_fallback` event in telemetry. This is provider
+*discovery*, not model substitution: if the committee exports `MODEL_BASE_URL`/`MODEL_NAME`
+(their prescribed model), those win verbatim and the switch is disabled.
+
+The target repository is resolved, in order, from:
+
+1. `WORKSPACE=…` on the make command line, `$HARNESS_WORKSPACE`, or `--workspace PATH`;
+2. a `Workspace: /path` (or `Repo: /path`) line in the issue text;
+3. an existing git checkout whose absolute path appears in the issue;
+4. the current directory (the evaluator may run the harness inside the target repo);
+5. the GitHub repository named by the issue (`https://github.com/owner/repo` or
+   `Repo: owner/repo`), cloned into `.cache/workspaces/`;
+6. otherwise the current directory, with a warning — `make run` never refuses to launch.
+
+`make run` launches **our** entrypoint (`harness.entrypoint`), never the stock `mini` CLI.
 
 ```sh
 make run WORKSPACE=/path/to/target-repo < issue.md
@@ -63,6 +79,20 @@ Other targets: `make test` (unit tests + no-API E2E on the fixture repo, plus li
 credentials are exported), `make smoke` (one trivial live task), `make clean`,
 `make check-upstream` (proves the vendored core is byte-identical to upstream v2.4.6),
 `make check-clean-env` (fresh-copy run of the whole evaluator workflow).
+
+---
+
+## Repository layout (submission checklist mapping)
+
+| committee checklist | in this repository |
+|---|---|
+| `Makefile` (root) | `Makefile` — `setup` / `run` / `test` / `clean` (+ `smoke`, `check-upstream`, `check-clean-env`) |
+| `README.md` | this file (quickstart, architecture, evaluation workflow) |
+| source code | `harness/` (entrypoint, guardrails, compaction, telemetry, reporting, laya adapter) |
+| configuration files | `harness/config/` (YAML policy/compaction/harness + prompts + calibration), `pyproject.toml` |
+| dependency files | `constraints.txt` (tested pins), `pyproject.toml`, vendored `vendor/mini-swe-agent/pyproject.toml` |
+| tests / evaluation procedure | `tests/unit/` (145 tests), `tests/fixture-repo/`, `scripts/e2e_fixture.py` (mock + live E2E) |
+| documentation | `docs/ARCHITECTURE.md`, `NOTES-BUILD.md`, `reports/EXAMPLE/` (a captured run) |
 
 ---
 
@@ -167,12 +197,15 @@ degradation notes, budget, timeline.
 ## Model configuration and reproducibility
 
 * Credentials are read **only** from the environment, at runtime, by `harness/config.read_env()`;
-  they are never written to disk. `.env.example` documents the three variables with empty values.
+  they are never written to disk. Only `AI_API_KEY` is required; `.env.example` documents all
+  variables with empty values.
+* Endpoint and model name come from `MODEL_BASE_URL`/`MODEL_NAME` when the evaluator exports them;
+  otherwise the checked-in `model.provider_defaults` in `harness/config/harness.yaml` are used
+  (DeepSeek then Qwen) with a one-shot provider switch on a 401/404, recorded in telemetry.
+  Either way the route is OpenAI-compatible (`openai/<name>` internally).
 * Sampling parameters are pinned in checked-in config (`temperature: 0.0`, `seed: 42`); if an endpoint
   rejects `seed`/`temperature`/`max_tokens`, the harness retries once without them and records the
   degradation in the report.
-* The endpoint is always OpenAI-compatible: `MODEL_BASE_URL` + `AI_API_KEY` + `MODEL_NAME`
-  (`openai/<name>` internally, so any compatible server works).
 * Dependency versions verified for this build (laya, litellm, torch, transformers, pytest, …) are
   recorded in `constraints.txt`; `make setup` applies them and retries unpinned with a warning if a
   pin cannot be satisfied on the evaluator's platform — setup never fails because of a constraint.
@@ -224,7 +257,7 @@ the model was told about the omission via the `<compaction>` marker. With produc
 ## Testing
 
 ```sh
-make test          # 129 unit tests (no model calls) + mock-endpoint E2E on the fixture repo
+make test          # 145 unit tests (no model calls) + mock-endpoint E2E on the fixture repo
 make test-live     # the same E2E against the evaluator endpoint (needs credentials)
 make smoke         # trivial live task: create hello.txt containing done
 ```
