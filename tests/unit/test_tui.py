@@ -310,7 +310,8 @@ def test_tui_collect_mode_submits_the_issue_and_starts_the_run(tmp_path):
             # a multi-line task submits on Enter, newlines intact
             textarea = app.query_one("#issue-input", IssueTextArea)
             textarea.text = "Fix the off-by-one in buggy.py\nSee tests/test_buggy.py"
-            await pilot.press("enter")
+            # ctrl+j (some terminals deliver Return as a newline) must also submit
+            await pilot.press("ctrl+j")
             for _ in range(30):
                 await pilot.pause(0.2)
                 if app._child is not None:

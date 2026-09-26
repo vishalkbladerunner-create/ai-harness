@@ -180,7 +180,9 @@ class IssueTextArea(TextArea):
             self.text = text
 
     async def _on_key(self, event) -> None:
-        if event.key == "enter":
+        # "enter" is the normal submit; "ctrl+j" covers terminals (or pty line
+        # disciplines) that deliver the Return key as a literal newline.
+        if event.key in ("enter", "ctrl+j"):
             event.prevent_default()
             event.stop()
             self.post_message(self.Submitted(self.text))
