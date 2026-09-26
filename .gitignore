@@ -1,0 +1,35 @@
+# Secrets — never commit
+.env
+.env.local
+.env.*.local
+
+# Python virtualenv (project-local)
+.venv/
+venv/
+
+# Python build artefacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Vendored core build artefacts (the vendored *source* is committed)
+vendor/mini-swe-agent/**/__pycache__/
+vendor/mini-swe-agent/src/mini_swe_agent.egg-info/
+
+# Generated run artefacts (reports/EXAMPLE/ is kept as the reference artefact)
+reports/*
+!reports/.gitkeep
+!reports/EXAMPLE/
+
+# Cached laya checkpoint + HF cache (large, environment-local)
+harness/checkpoints/
+.cache/
+
+# Reference harnesses — out of the submission repo (see README)
+harness-lab/
+
+# OS / editor noise
+.DS_Store
+*.swp

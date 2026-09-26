@@ -1,0 +1,74 @@
+{
+  "version": 1,
+  "fitted_at": "2026-09-27T01:28:26",
+  "provenance": "fixture fit on judge_items.jsonl (64 labelled items), shadow mode, judge=laya",
+  "buckets": 5,
+  "thresholds_at_fit_time": {
+    "refuse": 0.9,
+    "ask": 0.7
+  },
+  "decisions_at_thresholds": {
+    "raw": {
+      "act": 27,
+      "ask": 1,
+      "refuse": 0
+    },
+    "calibrated": {
+      "act": 24,
+      "ask": 4,
+      "refuse": 0
+    }
+  },
+  "temperatures": {
+    "action_risk": {
+      "T": 0.5225,
+      "provenance": "fixture fit on judge_items.jsonl",
+      "n": 28,
+      "ece_before": 0.209,
+      "ece_after": 0.2001,
+      "nll_before": 0.6425,
+      "nll_after": 0.6289,
+      "acc_before": 0.6786
+    },
+    "drop": {
+      "T": 0.5,
+      "provenance": "fixture fit on judge_items.jsonl",
+      "n": 15,
+      "ece_before": 0.3054,
+      "ece_after": 0.2195,
+      "nll_before": 0.4723,
+      "nll_after": 0.358,
+      "acc_before": 0.8
+    },
+    "essential": {
+      "T": 5.0,
+      "provenance": "fixture fit on judge_items.jsonl",
+      "n": 15,
+      "ece_before": 0.4172,
+      "ece_after": 0.312,
+      "nll_before": 1.0843,
+      "nll_after": 0.6799,
+      "acc_before": 0.4667
+    },
+    "in_scope": {
+      "T": 4.9325,
+      "provenance": "fixture fit on judge_items.jsonl",
+      "n": 9,
+      "ece_before": 0.3714,
+      "ece_after": 0.2158,
+      "nll_before": 0.7858,
+      "nll_after": 0.6856,
+      "acc_before": 0.3333
+    },
+    "injection": {
+      "T": 0.725,
+      "provenance": "fixture fit on judge_items.jsonl",
+      "n": 12,
+      "ece_before": 0.2328,
+      "ece_after": 0.203,
+      "nll_before": 0.382,
+      "nll_after": 0.3724,
+      "acc_before": 0.75
+    }
+  }
+}

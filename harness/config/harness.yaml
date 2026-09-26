@@ -1,0 +1,80 @@
+# guarded-mini — checked-in runtime configuration.
+#
+# NO SECRETS LIVE HERE. The model credential and endpoint are read from the
+# environment at runtime (AI_API_KEY, MODEL_BASE_URL, MODEL_NAME) by
+# harness/config/__init__.py:read_env(). Nothing in this file is a credential.
+#
+# Reproducibility (hackathon rule 9): sampling parameters and the seed are
+# pinned below. Temperature is a checked-in constant; if an endpoint rejects
+# `seed` the harness degrades once, logs the degradation in telemetry, and
+# continues without it.
+
+version: 1
+
+agent:
+  # Upstream mini-swe-agent budgets (interpreted by the vendored core).
+  step_limit: 60
+  wall_time_limit_seconds: 1200
+  max_consecutive_format_errors: 3
+  # Upstream cost tracking is unreliable on custom OpenAI-compatible endpoints
+  # (unknown price tables), so we budget on tokens instead of dollars; see
+  # `budget` below and harness/agent.py.
+  cost_limit: 0.0
+
+model:
+  # Appended to whatever model_kwargs the entrypoint builds at runtime.
+  # temperature/seed are the pinned values requested by rule 9.
+  model_kwargs:
+    drop_params: true
+    temperature: 0.0
+    seed: 42
+    max_tokens: 4096
+  # Unknown model prices on the evaluator endpoint must not crash the run.
+  cost_tracking: ignore_errors
+  # Retry policy for transient endpoint failures (tenacity is upstream's; this
+  # cap is enforced by our model wrapper for the extra "seed unsupported" path).
+  request_timeout: 300
+
+budget:
+  # Hard, harness-enforced budgets. Exceeding one triggers a graceful
+  # best-effort exit (LimitsExceeded) with a summary, never a traceback.
+  max_steps: 60
+  max_llm_calls: 90
+  max_prompt_tokens: 1500000
+  max_completion_tokens: 200000
+  max_wall_seconds: 1200
+
+environment:
+  # Default per-command timeout (upstream LocalEnvironment semantics).
+  command_timeout: 60
+  # Observations longer than this are elided by the observation template.
+  max_output_chars: 20000
+
+verification:
+  # auto  -> detect the project's test command and run it after file changes
+  # on    -> force the configured command
+  # off   -> disable self-verification (still recorded in the report)
+  mode: auto
+  timeout_seconds: 180
+  # Commands tried in order for auto-detection; first match wins.
+  python:
+    - "python -m pytest -q"
+  node:
+    - "npm test --silent"
+  generic:
+    - "make test"
+
+telemetry:
+  dir: reports
+  jsonl_name: telemetry.jsonl
+  trajectory_name: trajectory.json
+  patch_name: patch.diff
+  report_name: REPORT.md
+
+scope:
+  # Directories that are never in scope for automated edits.
+  ignore_globs:
+    - ".git/**"
+    - ".venv/**"
+    - "node_modules/**"
+    - "harness/checkpoints/**"

@@ -1,0 +1,48 @@
+# guarded-mini — our harness package (this repo).
+#
+# NOTE: the SWE-agent core (`mini-swe-agent`) is *vendored* under
+# vendor/mini-swe-agent and installed by `make setup` from that pinned checkout
+# BEFORE this package. It is deliberately not declared as a PyPI dependency so a
+# resolution can never silently swap the pinned core for a different release.
+# `make setup` therefore runs `pip install -e . --no-deps` for this package.
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "guarded-mini"
+version = "0.1.0"
+description = "A minimal, guarded SWE harness with a local calibrated decision layer (built on mini-swe-agent)."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [{ name = "guarded-mini team" }]
+dependencies = [
+    "pyyaml",
+    "jinja2",
+    "pydantic>=2",
+    "requests",
+]
+
+[project.scripts]
+guarded-mini = "harness.entrypoint:main"
+
+[tool.setuptools]
+# Explicit package list: discovery would walk harness-lab/ (reference harness
+# checkouts with node_modules) and stall. Listing packages keeps installs fast.
+packages = [
+    "harness",
+    "harness.config",
+    "harness.telemetry",
+    "harness.context",
+    "harness.guardrails",
+    "harness.compaction",
+    "harness.laya",
+]
+
+[tool.setuptools.package-data]
+harness = ["config/*.yaml", "config/*.json", "config/prompts/*.md", "laya/*.md"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests/unit"]

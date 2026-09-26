@@ -1,0 +1,154 @@
+# Guardrail policy — deterministic rules + laya second opinion.
+#
+# Decision vocabulary: allow | ask | refuse.
+#   * deterministic rules run first and are authoritative when they match;
+#   * commands that match neither the safe list nor a refuse rule are "grey" and go
+#     to the laya judge for a calibrated second opinion;
+#   * `ask` escalates to a human where one exists; this harness runs unattended, so
+#     `ask` resolves to refuse-with-guidance (logged with its probability).
+#
+# Patterns are Python regular expressions, matched case-insensitively against each
+# pipeline segment of the command.
+
+guardrails:
+  mode: enforce            # enforce | shadow (judge + log, never block) | off
+  unattended: true         # ask -> refuse with a suggested safe alternative
+  judge:
+    enabled: true
+    model: convaiinnovations/laya
+    max_len: 512           # English checkpoint context; state budget ~320 tokens
+    head_max_len: 192
+    load_timeout_s: 900    # first load may download (cached by make setup)
+    predict_timeout_s: 30
+    max_command_chars: 400
+    # Bands: act (< ask), ask (>= ask, < refuse), refuse (>= refuse). Refit from the
+    # calibration appendix (harness/config/calibration.json); defaults are deliberately
+    # conservative because the base checkpoint is weak zero-shot on this domain.
+    refuse_threshold: 0.90
+    ask_threshold: 0.70
+    injection_threshold: 0.70
+  rules:
+    - id: privilege_escalation
+      outcome: refuse
+      reason: "privilege escalation is never required for a repository fix"
+      suggestion: "work inside the workspace with the current user's permissions"
+      patterns:
+        - '\bsudo\b'
+        - '\bdoas\b'
+        - '\bsu\s+-'
+    - id: filesystem_destruction
+      outcome: refuse
+      reason: "command can destroy filesystem data"
+      suggestion: "delete only specific files inside the workspace, e.g. `rm -f build/tmp.log`"
+      patterns:
+        - '\brm\s+(-[a-zA-Z]*[rf][a-zA-Z]*\s+)+/(\s|$)'
+        - '\brm\s+(-[a-zA-Z]*[rf][a-zA-Z]*\s+)+(~|\$HOME)(\s|/|$)'
+        - '\brm\s+(-[a-zA-Z]*[rf][a-zA-Z]*\s+)+\.\.(\s|/)'
+        - '\bmkfs(\.|\s|$)'
+        - '\bdd\s+.*of=/dev/'
+        - '>\s*/dev/[sh]d[a-z]'
+        - ':\(\)\s*\{\s*:\|:&\s*\}\s*;\s*:'
+        - '\b(shutdown|reboot|halt|poweroff)\b'
+        - '\bkill\s+-9\s+-1\b'
+        - '\bchmod\s+-R\s+777\s+/(\s|$)'
+        - '\bchown\s+-R\s+\S+\s+/(\s|$)'
+        - '\bfind\s+/\s+.*-delete\b'
+        - '\bgit\s+clean\s+-[a-zA-Z]*[fdx]'
+        - '\bgit\s+reset\s+--hard\b'
+    - id: credential_access
+      outcome: refuse
+      reason: "reading credential material is out of scope and forbidden"
+      suggestion: "the harness never needs credential files; continue with repository files only"
+      patterns:
+        - '\.ssh/(id_|known_hosts|authorized_keys)'
+        - '\.aws/credentials'
+        - '\.netrc'
+        - '\.gnupg'
+        - '(^|[/\s"])\.env(\s|$|["''])'          # .env itself, not .env.example
+        - '\.pem(\s|$|["''])|\.p12(\s|$|["''])|id_rsa'
+        - '\bcredentials\.json\b'
+        - '\bsecurity\s+find-(generic|internet)-password\b'
+        - '\bkeychain\b'
+        - '\bprintenv\b.*(KEY|TOKEN|SECRET|PASSWORD)'
+        - '\becho\s+\$?\{?(AI_API_KEY|MODEL_BASE_URL)\b'
+    - id: network_egress
+      outcome: refuse
+      reason: "network calls other than the model endpoint are out of policy"
+      suggestion: "work offline; if you need data, derive it from the repository"
+      patterns:
+        - '\b(curl|wget)\b'
+        - '\bnc\s+-|netcat\b'
+        - '\b(ssh|scp|sftp)\b'
+        - '\bping\s'
+        - '\bnslookup\b|\bdig\s'
+        - '\bgit\s+(clone|fetch|pull|remote\s+add)\b'
+        - '\bpip\s+download\b'
+        - '\bpip\s+install\b(?!.*(-e\s+\.|--no-index|--no-deps))'
+        - '\b(npm|pnpm|yarn|bun)\s+(install|add|i)\b'
+        - '\b(apt|apt-get|brew|port|yum|dnf)\s+(install|upgrade)\b'
+        - '\buv\s+(pip\s+)?install\b(?!.*(-e\s+\.|--no-index|--no-deps))'
+    - id: history_and_staging
+      outcome: refuse
+      reason: "the harness submits the final diff itself; git staging/commits are forbidden"
+      suggestion: "just run harness_submit_patch when the tests pass"
+      patterns:
+        - '\bgit\s+(add|commit|tag|cherry-pick|revert|merge|rebase|filter-branch)\b'
+        - '\bgit\s+branch\s+-[dD]'
+        - '\bgit\s+push\b.*--force|--force\b'
+    - id: background_daemons
+      outcome: ask
+      reason: "background processes can survive the command and hold resources"
+      suggestion: "run the command in the foreground with a timeout instead"
+      patterns:
+        - '\bnohup\b'
+        - '&\s*$'
+        - '\bdisown\b'
+        - '\bscreen\s|\btmux\s+new'
+    - id: eval_obfuscation
+      outcome: ask
+      reason: "dynamic evaluation or decoding hides what will actually run"
+      suggestion: "write the command or script out plainly so it can be reviewed"
+      patterns:
+        - '\beval\b'
+        - '\bexec\s'
+        - 'base64\s+(-d|--decode)'
+        - 'python[0-9.]*\s+-c\s+.*(exec|eval)\('
+        - '\bxargs\b.*\b(sh|bash)\b'
+  # Commands whose first segment matches one of these are clearly safe and skip the
+  # judge (keeps latency down on the common read-only path).
+  safe_prefixes:
+    - 'ls\b'
+    - 'cat\b'
+    - 'sed\s+-n\b'
+    - 'head\b'
+    - 'tail\b'
+    - 'grep\b'
+    - 'rg\b'
+    - 'find\b'
+    - 'wc\b'
+    - 'nl\b'
+    - 'file\b'
+    - 'stat\b'
+    - 'diff\b'
+    - 'pwd\b'
+    - 'which\b'
+    - 'type\b'
+    - 'env\b(?!.*\bKEY\b)'          # listing the environment, without secrets
+    - 'python[0-9.]*\s+-m\s+pytest\b'
+    - 'pytest\b'
+    - 'make\s+(test|check|lint)\b'
+    - 'python[0-9.]*\s+-m\s+(unittest|compileall)\b'
+    - 'git\s+(status|diff|log|show|ls-files|rev-parse|describe)\b'
+    - 'echo\b(?!.*>)'               # echo without redirection
+    - 'printf\b(?!.*>)'
+    - 'true\b|false\b'
+    - 'cd\b'
+  # Write-ish segments that always warrant the judge when not clearly refused.
+  risk_markers:
+    - '(^|\s)>{1,2}\s*\S'
+    - '\brm\b|\bmv\b|\bcp\b|\btouch\b|\bmkdir\b|\bln\b|\btruncate\b|\bchmod\b|\bchown\b'
+    - '\bsed\s+-i\b|\bperl\s+-i\b'
+    - '\btee\b'
+    - '\bpatch\b|\bapply\b'
+    - '\bpython[0-9.]*\s+-c\b'
+    - '\bpip\s+install\s+-e\s+\.'

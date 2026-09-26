@@ -1,0 +1,25 @@
+# Calibrated context compaction (Phase 2).
+#
+# Pipeline is strictly three layers (see harness/compaction/compactor.py):
+#   1. deterministic preparation (pairing, pins, recency exemption, token estimates)
+#   2. semantic selection by the laya judge (batched, per item, compact state)
+#   3. deterministic fitting (token maths in code — never in the judge)
+#
+# mode:
+#   shadow -> judge and log verdicts, prune nothing (default until evidence says go live)
+#   live   -> apply verdicts (pins and causal pairing always win)
+#   off    -> pass messages through untouched
+
+compaction:
+  mode: live
+  target_tokens: 60000          # prune only when the estimated view exceeds this
+  recent_tokens: 12000          # most recent tokens are exempt from judging
+  max_judge_items: 40           # bound one forward pass
+  min_item_tokens: 60           # tiny items are not worth a question
+  drop_threshold: 0.60          # calibrated P(drop) at or above -> droppable
+  shorten_threshold: 0.50       # calibrated P(shorten) at or above -> shorten
+  essential_threshold: 0.50     # calibrated P(essential) at or above -> always keep
+  staleness_min: 1.5            # score (0..3) below this rescues a borderline item
+  shorten_chars: 1200           # deterministic shortening budget
+  chars_per_token: 4            # conservative estimate; code does the maths
+  trace_marker: true            # leave one summary marker where items were omitted

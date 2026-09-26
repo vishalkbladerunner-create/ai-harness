@@ -1,0 +1,10 @@
+diff --git a/buggy.py b/buggy.py
+index 3e66f75..c64fcf0 100644
+--- a/buggy.py
++++ b/buggy.py
+@@ -2,4 +2,4 @@ def last_item(items):
+     """Return the last item in a list."""
+     if not items:
+         return None
+-    return items[len(items)]
++    return items[len(items) - 1]
