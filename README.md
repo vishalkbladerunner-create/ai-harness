@@ -11,29 +11,51 @@ classifier (**laya**, ~421M params, CPU-only) makes the *infrastructure* decisio
 decision is auditable in the run report.
 
 ```
-        ┌───────────────────────────────────────────────────────────────────┐
-        │ make run  →  harness/entrypoint.py  →  harness/run.py             │
-        └───────────────────────────────────────────────────────────────────┘
+        ┌──────────────────────────────────────────────────────────────────────┐
+        │ make setup → .venv + pinned vendored core + harness (+ optional laya)│
+        │ make run   → harness/entrypoint.py → harness/run.py                  │
+        │ make test  → unit tests + mock-E2E on the fixture repo (no API)      │
+        └──────────────────────────────────────────────────────────────────────┘
                                     │
                  ┌──────────────────┴──────────────────┐
                  │  HarnessAgent (extends upstream)    │
                  │   query() ─┬─ budget check          │
                  │            ├─ calibrated compaction │← laya (per-item)
-                 │            └─ model call            │
-                 │   execute_actions()                 │
+                 │            └─ model call ───────────┼──► DeepSeek/Qwen endpoint
+                 │   execute_actions()                 │    (provider discovery)
                  └──────────────┬──────────────────────┘
                                 ▼
-        ┌───────────────────────────────────────────────────────────────────┐
-        │ GuardedEnvironment.execute  (the one choke point)                 │
-        │  sentinels → policy gate (deterministic + laya) → bash            │
-        │  → verification block → injection scan → secret masking → log     │
-        └───────────────────────────────────────────────────────────────────┘
-                                │
-        ┌───────────────────────┴───────────────────────────────────────────┐
-        │ telemetry.jsonl  →  REPORT.md (issue, diff, tests, guardrails,     │
-        │                     compaction, degradation notes, budget)        │
-        └───────────────────────────────────────────────────────────────────┘
+        ┌──────────────────────────────────────────────────────────────────────┐
+        │ GuardedEnvironment.execute  (the one choke point)                    │
+        │  sentinels → policy gate (deterministic + laya) → bash               │
+        │  → verification block → injection scan → secret masking → log        │
+        └──────────────────────────────┬───────────────────────────────────────┘
+                                       │ every event
+                    ┌──────────────────┴───────────────────┐
+                    ▼                                      ▼
+        ┌───────────────────────────┐        ┌─────────────────────────────────┐
+        │ telemetry.jsonl           │        │ Live TUI (make run TUI=1)       │
+        │  model_call (tokens,      │───────►│  context split │ project graph  │
+        │  latency, context split)  │  tails │  agent stream  │ follow / quit  │
+        │  command + guardrail …    │        └─────────────────────────────────┘
+        └─────────────┬─────────────┘
+                      ▼
+        ┌──────────────────────────────────────────────────────────────────────┐
+        │ REPORT.md (issue, context window, diff, tests, guardrails, scope,    │
+        │            injection, compaction, degradations, budget, timeline)    │
+        └──────────────────────────────────────────────────────────────────────┘
 ```
+
+---
+
+## Requirements
+
+* **Python ≥ 3.10** (the pinned upstream core requires it; macOS system Python is 3.9). `make setup`
+  looks for `python3.12`/`3.13`/`3.11`/`3.10` on PATH and in the usual install locations; if the
+  machine only has an older Python, it downloads `uv` into `.cache/tools` and provisions a
+  project-local CPython 3.12 automatically (`make setup BOOTSTRAP=python3.12` forces one).
+* Network access during `make setup` (pip + the optional laya checkpoint); `make run` needs only the
+  model endpoint.
 
 ---
 
@@ -52,11 +74,14 @@ make run < issue.md            # or: make run ISSUE=issue.md
 report, telemetry and trajectory are all masked; the fixture E2E asserts it).
 
 `MODEL_BASE_URL` and `MODEL_NAME` are **optional**. With only the key, the harness uses the
-checked-in provider defaults — DeepSeek `deepseek-chat` first, then Qwen `qwen-plus`/`qwen-max`
-(DashScope compatible endpoint) — and, if the key belongs to the other provider, switches
-once on the 401 and records a `provider_fallback` event in telemetry. This is provider
-*discovery*, not model substitution: if the committee exports `MODEL_BASE_URL`/`MODEL_NAME`
-(their prescribed model), those win verbatim and the switch is disabled.
+checked-in provider defaults — DeepSeek `deepseek-chat` → `deepseek-flash` → `deepseek-v4-pro`,
+then Qwen `qwen-plus`/`qwen-max` (DashScope compatible endpoint) — and, if the key belongs to the
+other provider, switches once on the 401 (skipping the other model names of the same provider) and
+records a `provider_fallback` event in telemetry. This is provider *discovery*, not model
+substitution: if the committee exports `MODEL_BASE_URL`/`MODEL_NAME` (their prescribed model),
+those win verbatim and the switch is disabled. A valid key with no balance produces a clear
+`insufficient balance/quota` error (no retries, no switch — the credential is never sent to
+another provider).
 
 The target repository is resolved, in order, from:
 
@@ -70,9 +95,30 @@ The target repository is resolved, in order, from:
 
 `make run` launches **our** entrypoint (`harness.entrypoint`), never the stock `mini` CLI.
 
+### Committee workflow, step by step
+
+The submission guidelines define: obtain the repository → `export AI_API_KEY` → `make setup` →
+`make run` → the prescribed issue/test case is supplied to the running harness. Every step maps
+1:1 to this repository:
+
+| guideline step | here |
+|---|---|
+| obtain the repository | `git clone <repo> && cd <repo>` |
+| configure the credential | `export AI_API_KEY="<PROVIDED_KEY>"` — the **only** variable required |
+| `make setup` | creates `.venv`, installs the pinned vendored core + harness + test deps; laya/TUI deps are optional and non-fatal |
+| `make run` | launches `harness.entrypoint` (unattended) |
+| issue/test case supplied | **stdin is the contract**: `make run < issue.md` (pipe, paste, or TTY prompt). `make run ISSUE=issue.md` is the *same run* with the issue passed as a file path instead of stdin — a convenience, never a requirement |
+| `make test` | unit tests + mock-endpoint E2E on the fixture repo (no credentials needed) |
+
+The evaluator does not need `ISSUE=` (or any other flag) for the standard workflow; it exists so a
+file path can be used when piping is inconvenient. `make run` accepts either, plus
+`--issue FILE` and a positional path.
+
 ```sh
+make run < issue.md                            # the committee path (stdin)
+make run ISSUE=issue.md                        # equivalent, file path
 make run WORKSPACE=/path/to/target-repo < issue.md
-make run ARGS="--workspace /repo --verify on --budget 10 --max-steps 40" < issue.md
+make run ARGS="--verify on --budget 10 --max-steps 40" < issue.md
 ```
 
 Other targets: `make test` (unit tests + no-API E2E on the fixture repo, plus live E2E when
@@ -91,7 +137,7 @@ credentials are exported), `make smoke` (one trivial live task), `make clean`,
 | source code | `harness/` (entrypoint, guardrails, compaction, telemetry, reporting, laya adapter) |
 | configuration files | `harness/config/` (YAML policy/compaction/harness + prompts + calibration), `pyproject.toml` |
 | dependency files | `constraints.txt` (tested pins), `pyproject.toml`, vendored `vendor/mini-swe-agent/pyproject.toml` |
-| tests / evaluation procedure | `tests/unit/` (145 tests), `tests/fixture-repo/`, `scripts/e2e_fixture.py` (mock + live E2E) |
+| tests / evaluation procedure | `tests/unit/` (168 tests), `tests/fixture-repo/`, `scripts/e2e_fixture.py` (mock + live E2E) |
 | documentation | `docs/ARCHITECTURE.md`, `NOTES-BUILD.md`, `reports/EXAMPLE/` (a captured run) |
 
 ---
@@ -188,11 +234,61 @@ fitting**, with the token maths done in code, never by the judge.
 
 `reports/<run-id>/` contains `REPORT.md`, `telemetry.jsonl`, `trajectory.json`, `patch.diff`,
 `status.json`; `reports/LATEST` points at the newest run. The JSONL logs every model call (latency,
-tokens, cost), every command with its guardrail decision (outcome, rule, probability, temperature),
-every compaction verdict, every verification run, degradations, and the budget. `REPORT.md` is the
-evaluation artefact: issue, summary, reproducibility (pinned temperature/seed), files changed with the
-diff, verification evidence, guardrail log, scope check, injection scans, compaction audit,
-degradation notes, budget, timeline.
+tokens, cost, context split), every command with its guardrail decision (outcome, rule, probability,
+temperature), every compaction verdict, every verification run, degradations, and the budget.
+`REPORT.md` is the evaluation artefact: issue, summary, context window, reproducibility (pinned
+temperature/seed), files changed with the diff, verification evidence, guardrail log, scope check,
+injection scans, compaction audit, degradation notes, budget, timeline. The CLI and report header
+are the team wordmark (Neuromancer), rendered from `harness/theme.py`.
+
+## Live TUI — a view over the telemetry stream (optional)
+
+The evaluation path is headless; the TUI is a **viewer** over the same run (it launches the normal
+entrypoint as a child process and tails its JSONL), so the visual path and the evaluation path
+cannot drift apart. The screen is three panels plus a status line:
+
+```
+┌─ guarded-mini ─────────────────────────────────────────────── run 20260927-… ── ⬡ Graph ─┐
+│ openai/deepseek-chat · step 7 · 12.4k tokens · 38s · budget 4m12s/20m                     │
+├──────────────────────────────────┬────────────────────────────────────────────────────────┤
+│ CONTEXT SPLIT (per model call)   │ PROJECT GRAPH (git, refreshed every ~2 s)              │
+│   system   ████        1.2k      │   fixture-repo/                                        │
+│   tools    █             0.3k    │   ├── buggy.py            ● modified                   │
+│   messages █████████   6.4k      │   ├── test_buggy.py       ○ touched by the run         │
+│   free     ███████████ 54.6k     │   └── README.md                                        │
+│   compaction saved 3.1k (4×)     │   (changed/untracked files highlighted)                │
+├──────────────────────────────────┴────────────────────────────────────────────────────────┤
+│ AGENT STREAM                                                                              │
+│ 14:02:11 model_call  3.1k tok  0.8s  context 34%                                          │
+│ 14:02:12 command     allow     in_workspace_write   sed -i 's/…/…/' buggy.py              │
+│ 14:02:12 verification PASS      python -m pytest -q                                       │
+│ 14:02:15 compaction  keep 3 / shorten 1 / drop 0   (laya, P(drop)=0.42)                   │
+└───────────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+* **Context split** (top-left) — what the next request is made of: `system` prompt, `tools`
+  (the harness command surface), `messages`, and `free` window space, recomputed after every model
+  call, plus the cumulative tokens pruned by compaction. The same numbers appear in the report's
+  **Context window** section. Counting is tiktoken `cl100k_base` — an approximation for
+  DeepSeek/Qwen tokenizers, labelled as such — and the window size comes from checked-in config
+  (`model.context_limit`, with per-provider overrides), never hard-coded.
+* **Project graph** (top-right) — the ground truth of what the run touched: a directory tree of the
+  target workspace rebuilt from `git status`/`ls` every couple of seconds, with modified/untracked
+  files highlighted (●) and files the agent read or edited marked (○). Toggle with the ⬡ button or
+  `g`; it is deliberately independent of telemetry (a missing event cannot hide a file change).
+* **Agent stream** (bottom) — every telemetry event as it is written: model calls with latency,
+  tokens and context utilisation; commands with their guardrail decision, rule and calibrated
+  probability; verification PASS/FAIL; compaction verdicts; degradations and budget warnings.
+
+```sh
+make run TUI=1 < issue.md                    # live, same headless run underneath
+make run TUI=1 ARGS="--dry-run" < issue.md   # TUI demo with no credentials
+make replay RUN=reports/LATEST               # open a finished run read-only (no model calls)
+```
+
+Keys: `g` graph, `f` follow, `q` quit. The TUI needs `textual` + `tiktoken` (installed by
+`make setup`, non-fatally); without them `make run TUI=1` explains how to install them and the
+headless path is unaffected.
 
 ## Model configuration and reproducibility
 
@@ -257,7 +353,7 @@ the model was told about the omission via the `<compaction>` marker. With produc
 ## Testing
 
 ```sh
-make test          # 145 unit tests (no model calls) + mock-endpoint E2E on the fixture repo
+make test          # 168 unit tests (no model calls) + mock-endpoint E2E on the fixture repo
 make test-live     # the same E2E against the evaluator endpoint (needs credentials)
 make smoke         # trivial live task: create hello.txt containing done
 ```

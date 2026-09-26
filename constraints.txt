@@ -17,3 +17,5 @@ transformers==5.17.0
 huggingface_hub==1.33.0
 laya==0.3.20
 pytest==9.1.1
+textual==8.2.8
+tiktoken==0.14.0

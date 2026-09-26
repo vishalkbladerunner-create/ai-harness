@@ -16,6 +16,8 @@ import time
 
 from minisweagent.models.test_models import DeterministicToolcallModel, make_toolcall_output
 
+from harness.context.tokens import bash_schema_tokens, split_context
+
 DEFAULT_OBSERVATION_TEMPLATE = (
     "{% if output.exception_info %}<exception>{{output.exception_info}}</exception>\n{% endif %}"
     "<returncode>{{output.returncode}}</returncode>\n<output>\n{{output.output}}</output>"
@@ -76,7 +78,12 @@ def verbose_fixture_scenario() -> list[dict]:
     return steps
 
 
-def build_dry_run_model(scenario: list[dict] | None = None, observation_template: str = "", telemetry=None):
+def build_dry_run_model(
+    scenario: list[dict] | None = None,
+    observation_template: str = "",
+    telemetry=None,
+    context_limit: int = 0,
+):
     outputs = list(scenario) if scenario else default_scenario()
     # A deterministic model must never run out of script: pad with a submit.
     outputs.append(toolcall("echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT", "Fallback submit.", call_id="call_fallback"))
@@ -86,15 +93,16 @@ def build_dry_run_model(scenario: list[dict] | None = None, observation_template
         cost_per_call=0.0,
         observation_template=observation_template or DEFAULT_OBSERVATION_TEMPLATE,
     )
-    return RelayedModel(inner, telemetry)
+    return RelayedModel(inner, telemetry, context_limit=context_limit)
 
 
 class RelayedModel:
     """Wrap any model to emit the same telemetry events a live model would."""
 
-    def __init__(self, inner, telemetry=None):
+    def __init__(self, inner, telemetry=None, context_limit: int = 0):
         self.inner = inner
         self.telemetry = telemetry
+        self.context_limit = int(context_limit or 0)
         self.config = inner.config  # AgentConfig/serialize compatibility
 
     def query(self, messages: list[dict], **kwargs) -> dict:
@@ -110,6 +118,7 @@ class RelayedModel:
                 prompt_chars=sum(len(str(m.get("content") or "")) for m in messages),
                 cost=0.0,
                 usage=usage,
+                context_split=split_context(messages, limit=self.context_limit, tools_tokens=bash_schema_tokens()),
                 dry_run=True,
             )
         return message

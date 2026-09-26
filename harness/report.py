@@ -48,6 +48,46 @@ def _section(title: str, body: str) -> str:
     return f"## {title}\n\n{body.strip()}\n\n"
 
 
+def _context_section(context: dict) -> str:
+    """The /context-style split + what compaction pruned (token-efficiency evidence)."""
+    split = context.get("last_split") or {}
+    if not split:
+        return "No model calls recorded; the context split is unavailable for this run.\n"
+    limit = int(split.get("limit") or context.get("limit") or 0)
+    total = int(split.get("total") or 0)
+    utilization = split.get("utilization")
+    if utilization is None:
+        utilization = (total / limit) if limit else 0.0
+
+    def row(name: str, count: int) -> list[str]:
+        share = f"{count / limit:.1%}" if limit else "n/a"
+        return [name, _fmt_int(count), share]
+
+    rows = [
+        row("system", int(split.get("system") or 0)),
+        row("tools", int(split.get("tools") or 0)),
+        row("messages", int(split.get("messages") or 0)),
+        row("total (last call)", total),
+        row("free", max(0, limit - total)),
+    ]
+    passes = int(context.get("compaction_passes") or 0)
+    saved = int(context.get("tokens_saved") or 0)
+    body = (
+        f"Last request: **{_fmt_int(total)}/{_fmt_int(limit)} tokens ({utilization:.0%} of the window)**. "
+        f"Counting: `{split.get('method', 'approximate')}` — an approximation for DeepSeek/Qwen tokenizers, "
+        "used for the relative breakdown.\n\n"
+        + _table(rows, ["section", "tokens", "share of window"])
+        + "\n"
+        + (
+            f"Compaction pruned **{_fmt_int(saved)} tokens** across {passes} pass(es) before they were sent "
+            "(tokens that would otherwise have been in the prompt; see the Compaction audit for per-item verdicts).\n"
+            if passes
+            else "No live compaction pass ran in this run.\n"
+        )
+    )
+    return body
+
+
 def render_report(ctx: dict) -> str:
     """Render the Markdown report from a context dict produced by ``run.py``."""
     status = ctx.get("status", "unknown")
@@ -106,6 +146,13 @@ def render_report(ctx: dict) -> str:
             ),
         )
     )
+
+    context = ctx.get("context") or {}
+    parts.append(_section("Context window", _context_section(context)))
+
+    error = ctx.get("error") or ""
+    if error:
+        parts.append(_section("Error", _code_block(error, 2000)))
 
     repro = ctx.get("reproducibility") or {}
     if repro:

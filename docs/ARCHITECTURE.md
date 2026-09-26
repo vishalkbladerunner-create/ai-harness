@@ -189,7 +189,7 @@ list. Its evidence (the fixture study) is in the README appendix; live is only e
 
 | check | command | result |
 |---|---|---|
-| unit + mock E2E | `make test` | 145 passed; fixture E2E PASS (submitted / tests pass / report / patch / telemetry / no credential in artefacts) |
+| unit + mock E2E | `make test` | 168 passed; fixture E2E PASS (submitted / tests pass / report / patch / telemetry / no credential in artefacts) |
 | vendored-core purity | `make check-upstream` | `vendored core == upstream v2.4.6 (byte-identical)` |
 | fresh copy, degraded path | `scripts/clean_env_check.sh --skip-laya` | `make setup` + `make test` PASS (heuristic judge, no laya) |
 | fresh copy, full path | `scripts/clean_env_check.sh` | `make setup` (laya install + checkpoint) + `make test` PASS |
@@ -197,3 +197,26 @@ list. Its evidence (the fixture study) is in the README appendix; live is only e
 
 The degraded-path check is deliberate: with laya unavailable the whole harness still runs on the
 documented heuristics and all tests pass — that is the fallback-first requirement, verified.
+
+## 9. The TUI is a view over the event log (Phase 7)
+
+```
+make run TUI=1
+ └─ harness.entrypoint --tui                 # parses the task, resolves the workspace,
+     │                                        # then becomes a *viewer*
+     ├─ child: python -m harness.entrypoint --issue <staged> …   # the SAME headless run
+     │    └─ writes reports/<run>/telemetry.jsonl (one JSON line per event)
+     └─ harness.tui.HarnessTUI (Textual)
+          ├─ JsonlTail(telemetry.jsonl)       # incremental, partial-line safe
+          ├─ ContextPanel  ← model_call.context_split + compaction.tokens_saved
+          ├─ RichLog        ← event_line(event) per event
+          └─ GraphPanel     ← git status/ls-files/diff, polled every 2s
+```
+
+Nothing about a run depends on the TUI being open: it launches the headless path verbatim, reads
+the JSONL, and `make replay RUN=…` can re-open any finished run (no credentials, no model calls).
+The context split is produced in `HarnessModel.query` via `harness/context/tokens.py` (tiktoken
+`cl100k_base`, chars/4 fallback) and recorded in every `model_call` event, so the same numbers feed
+the panel and the report's "Context window" section. `tools` counts the real upstream `BASH_TOOL`
+schema plus the sentinel-docs section of the task prompt; `free = limit - total`, with the limit
+from `model.context_limit` in checked-in config.

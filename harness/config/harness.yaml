@@ -22,6 +22,12 @@ agent:
   cost_limit: 0.0
 
 model:
+  # Context window (tokens) used by the context-split panel and the report.
+  # A checked-in value, not a guess made in code: explicit MODEL_BASE_URL/
+  # MODEL_NAME runs use this default, the checked-in providers override it
+  # below. Counting is an approximation (tiktoken cl100k; see
+  # harness/context/tokens.py) — the panel labels it as such.
+  context_limit: 65536
   # Provider defaults used when the evaluator exports only AI_API_KEY (the
   # committee's documented workflow). Explicit MODEL_BASE_URL / MODEL_NAME always
   # take precedence and disable the fallback. This is provider discovery, not
@@ -29,10 +35,21 @@ model:
   provider_defaults:
     - base_url: https://api.deepseek.com/v1
       model_name: deepseek-chat
+      context_limit: 65536
+    # The account's /models list advertises these V4 names; they are tried if a
+    # DeepSeek key is accepted but `deepseek-chat` is not (HTTP 400/404).
+    - base_url: https://api.deepseek.com/v1
+      model_name: deepseek-flash
+      context_limit: 1048576
+    - base_url: https://api.deepseek.com/v1
+      model_name: deepseek-v4-pro
+      context_limit: 1048576
     - base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
       model_name: qwen-plus
+      context_limit: 131072
     - base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
       model_name: qwen-max
+      context_limit: 131072
   # Appended to whatever model_kwargs the entrypoint builds at runtime.
   # temperature/seed are the pinned values requested by rule 9.
   model_kwargs:

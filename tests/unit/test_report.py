@@ -62,6 +62,12 @@ def test_report_marks_budget_exhausted_status():
     assert "BUDGET EXHAUSTED" in text
 
 
+def test_report_shows_the_failure_reason():
+    text = render_report(minimal_ctx(status="error", exit_status="", error="RuntimeError: model endpoint reports insufficient balance/quota (HTTP 402)"))
+    assert "## Error" in text
+    assert "insufficient balance" in text
+
+
 def test_report_masks_credentials_in_issue_text(monkeypatch):
     monkeypatch.setenv("TEST_SECRET_TOKEN", "supersecretvalue123")
     text = render_report(

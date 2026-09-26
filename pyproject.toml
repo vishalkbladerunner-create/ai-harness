@@ -25,6 +25,11 @@ dependencies = [
     "requests",
 ]
 
+[project.optional-dependencies]
+# The TUI (`make run TUI=1`) is a viewer; the headless evaluation path never
+# needs these. `make setup` installs them non-fatally.
+tui = ["textual>=1", "tiktoken>=0.7"]
+
 [project.scripts]
 guarded-mini = "harness.entrypoint:main"
 

@@ -24,7 +24,10 @@ SHELL := /bin/bash
 .DEFAULT_GOAL := help
 
 VENV        := .venv
-BOOTSTRAP   ?= $(shell for p in python3.13 python3.12 python3.11 python3.10 python3; do command -v $$p >/dev/null 2>&1 && { echo $$p; break; }; done)
+# BOOTSTRAP: optional explicit interpreter (e.g. make setup BOOTSTRAP=python3.12).
+# Empty means "auto": scripts/bootstrap_env.sh finds a Python >= 3.10, or
+# provisions a managed CPython 3.12 via uv when the machine only has an older one.
+BOOTSTRAP   ?=
 PY          := $(VENV)/bin/python
 PIP         := $(PY) -m pip
 VENV_STAMP  := $(VENV)/.ready
@@ -35,6 +38,8 @@ ISSUE       ?=
 WORKSPACE   ?=
 ARGS        ?=
 BUDGET      ?=
+TUI         ?=
+RUN         ?=
 
 # ---------------------------------------------------------------------------
 help:
@@ -42,8 +47,11 @@ help:
 	@echo ""
 	@echo "  make setup     create .venv, install pinned mini-swe-agent (vendored) + deps,"
 	@echo "                 install laya + checkpoint (both NON-FATAL, cached)"
+	@echo "                 (finds Python >= 3.10; provisions a managed CPython via uv if absent)"
 	@echo "  make run       run our entrypoint against a task (stdin or ISSUE=path)"
 	@echo "                 (only AI_API_KEY is required; MODEL_BASE_URL/MODEL_NAME optional)"
+	@echo "  make run TUI=1 same run, live terminal UI (graph + context panels; q quits)"
+	@echo "  make replay    open a finished run in the TUI (RUN=reports/LATEST default)"
 	@echo "  make test      unit tests + dry-run E2E on the fixture repo (no API calls),"
 	@echo "                 plus live E2E when creds are present"
 	@echo "  make test-live force the live eval against tests/fixture-repo (needs creds)"
@@ -53,11 +61,16 @@ help:
 	@echo "  make run ISSUE=path/to/issue.md WORKSPACE=/path/to/target-repo"
 	@echo "  make run < issue.md"
 	@echo "  make run ARGS=\"--verify on --budget 0.50\" BUDGET=0.50"
+	@echo "  make run TUI=1 ARGS=\"--dry-run\" < issue.md   # TUI demo without credentials"
 
 # ---------------------------------------------------------------------------
 $(VENV_STAMP):
-	@echo "== bootstrap interpreter: $(BOOTSTRAP) =="
-	$(BOOTSTRAP) -m venv $(VENV)
+	@if [ -n "$(BOOTSTRAP)" ]; then \
+		echo "== bootstrap interpreter (BOOTSTRAP override): $(BOOTSTRAP) =="; \
+		$(BOOTSTRAP) -m venv $(VENV); \
+	else \
+		bash scripts/bootstrap_env.sh $(VENV); \
+	fi
 	$(PIP) install --quiet --upgrade pip wheel setuptools
 	@touch $@
 
@@ -78,6 +91,15 @@ setup: $(VENV_STAMP)
 	else \
 		$(PIP) install --quiet pytest; \
 	fi
+	@echo "== installing TUI deps (optional; failure is non-fatal) =="
+	@if [ -f "$(CONSTRAINTS)" ]; then \
+		$(PIP) install --quiet -c "$(CONSTRAINTS)" "textual>=1" tiktoken || \
+		$(PIP) install --quiet "textual>=1" tiktoken || \
+		echo "   TUI deps unavailable — headless path unaffected (make run TUI=1 will explain)"; \
+	else \
+		$(PIP) install --quiet "textual>=1" tiktoken || \
+		echo "   TUI deps unavailable — headless path unaffected (make run TUI=1 will explain)"; \
+	fi
 	@if [ "$${SKIP_LAYA:-0}" = "1" ]; then \
 		echo "== laya sidecar: SKIPPED (SKIP_LAYA=1) — harness will run in degraded mode =="; \
 	else \
@@ -94,9 +116,14 @@ run: $(VENV_STAMP)
 	 MODEL_BASE_URL=$${MODEL_BASE_URL} \
 	 MODEL_NAME=$${MODEL_NAME} \
 	 $(PY) -m harness.entrypoint \
+	 $(if $(TUI),--tui,) \
 	 $(if $(WORKSPACE),--workspace "$(WORKSPACE)",) \
 	 $(if $(ISSUE),--issue "$(ISSUE)",) \
 	 $(if $(BUDGET),--budget $(BUDGET),) $(ARGS)
+
+# Open a finished run in the TUI (no credentials, no model calls).
+replay: $(VENV_STAMP)
+	@$(PY) -m harness.entrypoint --tui --replay "$(if $(RUN),$(RUN),reports/LATEST)"
 
 test: $(VENV_STAMP)
 	@$(MAKE) --no-print-directory test-unit
@@ -145,4 +172,4 @@ clean:
 	find reports -mindepth 1 -maxdepth 1 ! -name '.gitkeep' ! -name 'EXAMPLE' -print -exec rm -rf {} + 2>/dev/null || true
 	@echo "clean complete (reports/EXAMPLE is kept as the reference artefact)."
 
-.PHONY: help setup run test test-unit test-e2e test-live smoke clean check-upstream check-clean-env
+.PHONY: help setup run replay test test-unit test-e2e test-live smoke clean check-upstream check-clean-env

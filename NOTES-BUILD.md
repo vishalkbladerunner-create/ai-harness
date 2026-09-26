@@ -160,6 +160,44 @@ make smoke / make test-live             -> BLOCKED here: credentials are not exp
                                            exported; mock E2E proves the same code path.
 ```
 
+## Phase 7 — live TUI + context instrumentation (optional presentation layer)
+
+### Working (verified)
+
+```text
+tests/unit/test_theme.py / test_context_split.py / test_tui.py -> 18 tests (wordmark, split
+  arithmetic, telemetry tail, widgets, headless Textual replay + live-quit)
+.venv/bin/python scripts/e2e_fixture.py --mode mock
+  -> model_call events now carry context_split (system 513 / tools 137 / messages 1415 of 65536);
+     REPORT.md gains a "## Context window" section
+headless live-TUI check (Textual run_test, real child entrypoint, --dry-run)
+  -> child rc 0, status submitted, split tailed live, graph showed the touched file
+PTY check of `make run TUI=1` -> renders, q quits, exit 0 (screenshot-ish capture in the log)
+```
+
+* `harness/theme.py` — brand palette + Neuromancer wordmark (47 cols, 2 lines), used by the CLI
+  banner, the TUI and the Markdown report header.
+* `harness/context/tokens.py` — tiktoken cl100k split (system / tools / messages / free) with a
+  chars/4 fallback; the tools bucket is upstream's real bash schema plus the sentinel docs section
+  of the task prompt. Context window comes from `model.context_limit` in `harness.yaml`
+  (per-provider overrides: DeepSeek 64K, Qwen 128K).
+* `harness/tui.py` + `harness/tui_widgets.py` — Textual viewer over telemetry.jsonl: context
+  panel, agent stream, live git graph, ⬡ toggle. `make run TUI=1` and `make replay RUN=…`.
+
+### Broke / fixed (exact errors)
+
+1. **`python harness/entrypoint.py` crashed in litellm with `AttributeError: module 'secrets' has no
+   attribute 'token_hex'`.** Script mode put `harness/` on `sys.path[0]`, so litellm's `import
+   secrets` resolved to our `harness/secrets.py`. Fix: the entrypoint drops its own directory from
+   `sys.path` and inserts the repo root (module mode was already correct).
+2. **In the live TUI, keyboard input died once the child run finished (pty write → `EIO`).** The
+   child harness inherited the TUI's terminal stdin, and its bash runner calls `setsid()`
+   (`start_new_session`), which hangs up the inherited pty. Fix: spawn the child with
+   `stdin=DEVNULL` — it gets its task via `--issue` and never reads stdin. Reproduced without
+   Textual (plain parent + child + pty), then fixed and re-verified under a pty.
+3. **`q` mid-run reported the child's `-15` as the exit code.** Fix: `_on_child_exit` keeps the
+   interruption code (130) when the user quit first.
+
 ## Blocked
 
 * **Live endpoint runs (`make smoke`, `make test-live`)** — `AI_API_KEY` / `MODEL_BASE_URL` /

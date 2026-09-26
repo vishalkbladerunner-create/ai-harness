@@ -414,7 +414,12 @@ def execute_run(options: RunOptions, telemetry: Telemetry | None = None, on_read
     if options.dry_run:
         from harness.dryrun import build_dry_run_model
 
-        model = build_dry_run_model(options.scenario, prompts["observation_template"], telemetry=telemetry)
+        model = build_dry_run_model(
+            options.scenario,
+            prompts["observation_template"],
+            telemetry=telemetry,
+            context_limit=int((config.get("model") or {}).get("context_limit") or 0),
+        )
         model_name = "dry-run (scripted, no network)"
     else:
         model_cfg = build_model_config(config, env_vars)
@@ -557,6 +562,7 @@ def execute_run(options: RunOptions, telemetry: Telemetry | None = None, on_read
         "run_id": run_id,
         "status": status,
         "exit_status": exit_status,
+        "error": error,
         "workspace": str(workspace),
         "model_name": model_name,
         "started_iso": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(started)),
@@ -564,6 +570,19 @@ def execute_run(options: RunOptions, telemetry: Telemetry | None = None, on_read
         "issue": options.issue.to_dict() | {"text": options.issue.text},
         "stats": stats,
         "patch": patch,
+        # Context-window evidence: last per-section split + what compaction pruned
+        # (the token-efficiency claim, with its counting method stated).
+        "context": {
+            "limit": int((config.get("model") or {}).get("context_limit") or 0),
+            "last_split": next(
+                (e["context_split"] for e in reversed(telemetry.events_of("model_call")) if e.get("context_split")),
+                None,
+            ),
+            "compaction_passes": len([e for e in telemetry.events_of("compaction") if not e.get("shadow")]),
+            "tokens_saved": sum(
+                int(e.get("tokens_saved") or 0) for e in telemetry.events_of("compaction") if not e.get("shadow")
+            ),
+        },
         "verification": {
             "command": verifier.command,
             "kind": verifier.kind,

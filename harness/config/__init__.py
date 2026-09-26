@@ -125,11 +125,17 @@ def openai_compatible_model_name(model_name: str) -> str:
 def _default_providers(config: dict) -> list[dict]:
     """Checked-in provider defaults from harness.yaml (never secrets)."""
     entries = ((config.get("model") or {}).get("provider_defaults")) or []
-    return [
-        {"base_url": str(entry.get("base_url", "")).strip(), "model_name": str(entry.get("model_name", "")).strip()}
-        for entry in entries
-        if entry.get("base_url") and entry.get("model_name")
-    ]
+    providers = []
+    for entry in entries:
+        if entry.get("base_url") and entry.get("model_name"):
+            providers.append(
+                {
+                    "base_url": str(entry.get("base_url", "")).strip(),
+                    "model_name": str(entry.get("model_name", "")).strip(),
+                    "context_limit": int(entry.get("context_limit") or 0),
+                }
+            )
+    return providers
 
 
 def _infer_provider(text: str, defaults: list[dict]) -> dict | None:
@@ -187,6 +193,9 @@ def build_model_config(config: dict, env: dict[str, str]) -> dict:
     model_cfg = copy.deepcopy(config.get("model") or {})
     model_kwargs = dict(model_cfg.pop("model_kwargs", {}) or {})
     model_kwargs.pop("provider_defaults", None)
+    # Context window for the split panel/report: explicit provider entries win,
+    # then the checked-in default (never a hard-coded constant in code).
+    default_context_limit = int(model_cfg.pop("context_limit", 0) or 0)
     chain = provider_chain(config, env)
     primary, fallbacks = chain[0], chain[1:]
     model_kwargs.update(
@@ -202,8 +211,13 @@ def build_model_config(config: dict, env: dict[str, str]) -> dict:
         "model_name": openai_compatible_model_name(primary["model_name"]),
         "model_kwargs": model_kwargs,
         "cost_tracking": model_cfg.get("cost_tracking", "ignore_errors"),
+        "context_limit": primary.get("context_limit") or default_context_limit,
         "provider_chain": [
-            {"model_name": openai_compatible_model_name(entry["model_name"]), "base_url": entry["base_url"]}
+            {
+                "model_name": openai_compatible_model_name(entry["model_name"]),
+                "base_url": entry["base_url"],
+                "context_limit": entry.get("context_limit") or default_context_limit,
+            }
             for entry in fallbacks
         ],
     }
