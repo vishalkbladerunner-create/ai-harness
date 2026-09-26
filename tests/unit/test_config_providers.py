@@ -29,7 +29,7 @@ def test_read_env_rejects_missing_key(monkeypatch):
 def test_default_chain_is_deepseek_then_qwen(monkeypatch):
     _clear_model_env(monkeypatch)
     chain = provider_chain(load_harness_config(), read_env())
-    assert [entry["model_name"] for entry in chain] == ["deepseek-chat", "qwen-plus"]
+    assert [entry["model_name"] for entry in chain] == ["deepseek-chat", "qwen-plus", "qwen-max"]
     assert chain[0]["base_url"].startswith("https://api.deepseek.com")
     assert "dashscope" in chain[1]["base_url"]
 
@@ -63,4 +63,4 @@ def test_build_model_config_prefixes_provider_and_keeps_chain(monkeypatch):
     cfg = build_model_config(load_harness_config(), read_env())
     assert cfg["model_name"] == "openai/deepseek-chat"
     assert cfg["model_kwargs"]["api_key"] == "sk-test-key-1234567890"
-    assert [entry["model_name"] for entry in cfg["provider_chain"]] == ["openai/qwen-plus"]
+    assert [entry["model_name"] for entry in cfg["provider_chain"]] == ["openai/qwen-plus", "openai/qwen-max"]

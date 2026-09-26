@@ -52,7 +52,7 @@ make run < issue.md            # or: make run ISSUE=issue.md
 report, telemetry and trajectory are all masked; the fixture E2E asserts it).
 
 `MODEL_BASE_URL` and `MODEL_NAME` are **optional**. With only the key, the harness uses the
-checked-in provider defaults — DeepSeek `deepseek-chat` first, then Qwen `qwen-plus`
+checked-in provider defaults — DeepSeek `deepseek-chat` first, then Qwen `qwen-plus`/`qwen-max`
 (DashScope compatible endpoint) — and, if the key belongs to the other provider, switches
 once on the 401 and records a `provider_fallback` event in telemetry. This is provider
 *discovery*, not model substitution: if the committee exports `MODEL_BASE_URL`/`MODEL_NAME`

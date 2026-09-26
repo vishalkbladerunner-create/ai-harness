@@ -70,3 +70,24 @@ def test_query_without_chain_raises_a_safe_error(monkeypatch):
         model.query([{"role": "user", "content": "hi"}])
     assert "sk-test" not in str(excinfo.value)
     assert "AuthenticationError" in str(excinfo.value)
+
+
+def test_query_switches_on_model_unavailable_bad_request(monkeypatch, tmp_path):
+    """Some providers answer an unavailable model name with 400, not 404."""
+    telemetry = Telemetry(tmp_path / "t.jsonl", "unit")
+    model = make_model(telemetry, [dict(QWEN)])
+    calls: list[str] = []
+
+    def fake_query(self, messages, **kwargs):
+        calls.append(self.config.model_name)
+        if len(calls) == 1:
+            raise litellm.exceptions.BadRequestError(
+                message="model qwen-plus not found", llm_provider="openai", model="qwen-plus"
+            )
+        return {"role": "assistant", "content": "ok", "extra": {"actions": []}}
+
+    monkeypatch.setattr("minisweagent.models.litellm_model.LitellmModel.query", fake_query)
+    message = model.query([{"role": "user", "content": "hi"}])
+    assert message["content"] == "ok"
+    assert model.active_model_name == "openai/qwen-plus"
+    telemetry.close()

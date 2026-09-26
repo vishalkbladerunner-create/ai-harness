@@ -184,6 +184,13 @@ class HarnessModel(LitellmModel):
                     "Check that AI_API_KEY matches MODEL_BASE_URL; the value is never logged."
                 ) from None
             raise
+        except litellm.exceptions.BadRequestError as exc:
+            # Some providers answer an unavailable model name with 400 rather than 404.
+            text = str(exc).lower()
+            if "model" in text and any(hint in text for hint in ("not found", "not exist", "no such", "unknown model")):
+                if self._try_next_provider("BadRequestError(model unavailable)"):
+                    return self.query(messages, **kwargs)
+            raise
         usage = extract_usage(message)
         message.setdefault("extra", {})["harness_usage"] = usage
         if self._telemetry is not None:

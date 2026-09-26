@@ -31,6 +31,8 @@ model:
       model_name: deepseek-chat
     - base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
       model_name: qwen-plus
+    - base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+      model_name: qwen-max
   # Appended to whatever model_kwargs the entrypoint builds at runtime.
   # temperature/seed are the pinned values requested by rule 9.
   model_kwargs:
