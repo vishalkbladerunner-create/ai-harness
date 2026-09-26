@@ -61,8 +61,20 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _read_stdin() -> str | None:
-    if sys.stdin is None or sys.stdin.isatty():
+    """Read the task from stdin. Piped input is read directly; a TTY is prompted.
+
+    The evaluator "feeds a GitHub issue/test case to the running harness": that can
+    be a pipe (`make run < issue.md`) or an interactive paste followed by Ctrl-D.
+    """
+    if sys.stdin is None:
         return None
+    if sys.stdin.isatty():
+        try:
+            print(f"[{HARNESS_NAME}] paste the issue/test text, then press Ctrl-D to run:", file=sys.stderr)
+            data = sys.stdin.read()
+            return data or None
+        except KeyboardInterrupt:
+            return None
     try:
         return sys.stdin.read()
     except Exception:
