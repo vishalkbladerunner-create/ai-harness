@@ -65,7 +65,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--tui",
         action="store_true",
         help="launch the live terminal UI (Textual): runs the normal headless entrypoint as a child "
-        "process and renders its telemetry stream (graph + context panels)",
+        "process and renders its telemetry stream (graph + context panels). Default: on an "
+        "interactive terminal; piped/scripted runs stay headless.",
+    )
+    parser.add_argument(
+        "--no-tui",
+        action="store_true",
+        help="force the headless path even on an interactive terminal",
     )
     parser.add_argument(
         "--replay",
@@ -114,19 +120,26 @@ def _load_scenario(path: str | None) -> list[dict] | None:
 # the *same* headless entrypoint as a child process and tails its telemetry, so
 # the evaluation path and the visual path cannot drift apart.
 # ---------------------------------------------------------------------------
-def _import_run_tui():
+def _import_run_tui(soft: bool = False):
     """Import the TUI lazily; a missing optional dependency must be a message."""
     try:
         from harness.tui import run_tui
 
         return run_tui
     except ImportError as exc:
-        print(
-            f"error: the TUI needs the optional dependencies ({exc}). "
-            "Run 'make setup' (installs textual + tiktoken) or "
-            "'pip install \"textual>=1\" tiktoken'. The headless path (make run) is unaffected.",
-            file=sys.stderr,
-        )
+        if soft:
+            print(
+                f"[{HARNESS_NAME}] note: the TUI needs optional dependencies ({exc}); "
+                "continuing headless. Run 'make setup' to install them.",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                f"error: the TUI needs the optional dependencies ({exc}). "
+                "Run 'make setup' (installs textual + tiktoken) or "
+                "'pip install \"textual>=1\" tiktoken'. The headless path (make run) is unaffected.",
+                file=sys.stderr,
+            )
         return None
 
 
@@ -167,12 +180,13 @@ def _tui_child_command(args, options: RunOptions, issue) -> list[str]:
     return command
 
 
-def _launch_tui(args, options: RunOptions | None, issue) -> int:
+def _launch_tui(args, options: RunOptions | None, issue) -> int | None:
+    """Run the TUI; returns None when it could not start (caller may go headless)."""
     import os
 
-    run_tui = _import_run_tui()
+    run_tui = _import_run_tui(soft=not args.tui)
     if run_tui is None:
-        return EXIT_USAGE
+        return None
     reports_root = options.reports_root if options is not None else CONFIG_REPO_ROOT / "reports"
     if options is None:  # --replay: no run, no issue, no credentials needed
         return run_tui(reports_root=reports_root, replay=Path(args.replay))
@@ -192,18 +206,57 @@ def _launch_tui(args, options: RunOptions | None, issue) -> int:
     )
 
 
+def _tui_mode(args) -> str:
+    """Resolve --tui/--no-tui into on / off / auto (default: auto)."""
+    if args.tui and args.no_tui:
+        raise ValueError("--tui and --no-tui are mutually exclusive")
+    if args.tui:
+        return "on"
+    if args.no_tui:
+        return "off"
+    return "auto"
+
+
+def _should_use_tui(mode: str) -> bool:
+    """auto -> the TUI when attached to a real terminal; piped runs stay headless."""
+    if mode == "on":
+        return True
+    if mode == "off":
+        return False
+    try:
+        import os
+
+        return bool(
+            sys.stdin is not None
+            and sys.stdout is not None
+            and sys.stdin.isatty()
+            and sys.stdout.isatty()
+            and os.environ.get("TERM", "") not in ("", "dumb")
+        )
+    except Exception:
+        return False
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     logging.basicConfig(
         level=logging.INFO if args.verbose else logging.WARNING,
         format="%(levelname)s %(name)s: %(message)s",
     )
-    if args.replay and not args.tui:
-        print("error: --replay is only meaningful together with --tui", file=sys.stderr)
+    try:
+        mode = _tui_mode(args)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
         return EXIT_USAGE
-    if args.tui and args.replay:
-        return _launch_tui(args, None, None)
-    if not args.quiet and not args.tui:
+    if args.replay:
+        if mode != "on":
+            print("error: --replay requires --tui", file=sys.stderr)
+            return EXIT_USAGE
+        code = _launch_tui(args, None, None)
+        return code if code is not None else EXIT_USAGE
+
+    use_tui = _should_use_tui(mode)
+    if not args.quiet and not use_tui:
         print_banner()
 
     # Task: explicit file wins, then positional path, then stdin.
@@ -234,8 +287,13 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return EXIT_USAGE
 
-    if args.tui:
-        return _launch_tui(args, options, issue)
+    if use_tui:
+        code = _launch_tui(args, options, issue)
+        if code is not None:
+            return code
+        if mode == "on":
+            return EXIT_USAGE
+        print(f"[{HARNESS_NAME}] note: TUI unavailable; continuing headless.", file=sys.stderr)
 
     print(f"[{HARNESS_NAME}] issue: {len(issue.text)} chars from {issue.source}")
     print(f"[{HARNESS_NAME}] workspace: {options.workspace}")

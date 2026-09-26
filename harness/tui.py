@@ -482,8 +482,12 @@ def run_tui(
     replay: Path | None = None,
     cwd: Path | None = None,
     env: dict | None = None,
-) -> int:
-    """Run the TUI to completion; returns the process exit code to propagate."""
+) -> int | None:
+    """Run the TUI to completion; returns the exit code to propagate.
+
+    ``None`` means the TUI could not start *before* the harness child was
+    launched, so the caller may safely fall back to the headless path.
+    """
     reports_root = Path(reports_root)
     if replay is not None and resolve_run_dir(replay, reports_root) is None:
         print(f"error: --replay target not found: {replay}", file=sys.stderr)
@@ -499,10 +503,11 @@ def run_tui(
     try:
         app.run()
     except Exception as exc:  # noqa: BLE001 - a TUI failure must not be a traceback
+        started = getattr(app, "_child", None) is not None
         print(
             f"error: the TUI could not start ({type(exc).__name__}: {exc}). "
             "Run it from an interactive terminal, or use the headless path (make run).",
             file=sys.stderr,
         )
-        return 2
+        return 2 if started else None
     return int(app.final_code or 0)

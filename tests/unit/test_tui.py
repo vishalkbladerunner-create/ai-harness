@@ -209,3 +209,56 @@ def test_tui_live_mode_quits_and_terminates_the_child(tmp_path):
             break
         time.sleep(0.1)
     assert app._child.poll() is not None, "the harness child must not outlive the TUI"
+
+
+# ---------------------------------------------------------------------------
+# entrypoint launch modes: make run opens the TUI on a terminal, headless when piped
+# ---------------------------------------------------------------------------
+class _Stream:
+    def __init__(self, tty: bool):
+        self._tty = tty
+
+    def isatty(self) -> bool:
+        return self._tty
+
+
+def _args(*argv):
+    from harness.entrypoint import build_parser
+
+    return build_parser().parse_args(list(argv))
+
+
+def test_tui_mode_defaults_to_auto():
+    from harness.entrypoint import _tui_mode
+
+    assert _tui_mode(_args()) == "auto"
+
+
+def test_tui_mode_flags():
+    from harness.entrypoint import _tui_mode
+
+    assert _tui_mode(_args("--tui")) == "on"
+    assert _tui_mode(_args("--no-tui")) == "off"
+
+
+def test_tui_mode_rejects_conflicting_flags():
+    from harness.entrypoint import _tui_mode
+
+    try:
+        _tui_mode(_args("--tui", "--no-tui"))
+    except ValueError:
+        return
+    raise AssertionError("conflicting flags must be rejected")
+
+
+def test_auto_tui_requires_a_terminal(monkeypatch):
+    import harness.entrypoint as ep
+
+    assert ep._should_use_tui("on") is True
+    assert ep._should_use_tui("off") is False
+    monkeypatch.setattr(ep.sys, "stdin", _Stream(False))
+    monkeypatch.setattr(ep.sys, "stdout", _Stream(True))
+    assert ep._should_use_tui("auto") is False
+    monkeypatch.setattr(ep.sys, "stdin", _Stream(True))
+    monkeypatch.setenv("TERM", "xterm-256color")
+    assert ep._should_use_tui("auto") is True

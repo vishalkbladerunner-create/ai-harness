@@ -70,6 +70,7 @@ export AI_API_KEY=...          # REQUIRED — the only variable the committee ex
 
 make setup                     # venv + pinned core + harness + laya (laya is optional)
 make run < issue.md            # or: make run ISSUE=issue.md
+                               # interactive terminals open the live TUI; piped runs stay headless
 ```
 
 `AI_API_KEY` is read from the environment at runtime and **never written to disk** (the
@@ -108,7 +109,7 @@ The submission guidelines define: obtain the repository → `export AI_API_KEY` 
 | obtain the repository | `git clone <repo> && cd <repo>` |
 | configure the credential | `export AI_API_KEY="<PROVIDED_KEY>"` — the **only** variable required |
 | `make setup` | creates `.venv`, installs the pinned vendored core + harness + test deps; laya/TUI deps are optional and non-fatal |
-| `make run` | launches `harness.entrypoint` (unattended) |
+| `make run` | launches `harness.entrypoint` (unattended). On an interactive terminal it opens the live TUI; piped/scripted runs stay headless |
 | issue/test case supplied | **stdin is the contract**: `make run < issue.md` (pipe, paste, or TTY prompt). `make run ISSUE=issue.md` is the *same run* with the issue passed as a file path instead of stdin — a convenience, never a requirement |
 | `make test` | unit tests + mock-endpoint E2E on the fixture repo (no credentials needed) |
 
@@ -139,7 +140,7 @@ credentials are exported), `make smoke` (one trivial live task), `make clean`,
 | source code | `harness/` (entrypoint, guardrails, compaction, telemetry, reporting, laya adapter) |
 | configuration files | `harness/config/` (YAML policy/compaction/harness + prompts + calibration), `pyproject.toml` |
 | dependency files | `constraints.txt` (tested pins), `pyproject.toml`, vendored `vendor/mini-swe-agent/pyproject.toml` |
-| tests / evaluation procedure | `tests/unit/` (168 tests), `tests/fixture-repo/`, `scripts/e2e_fixture.py` (mock + live E2E) |
+| tests / evaluation procedure | `tests/unit/` (173 tests), `tests/fixture-repo/`, `scripts/e2e_fixture.py` (mock + live E2E) |
 | documentation | `docs/ARCHITECTURE.md`, `NOTES-BUILD.md`, `reports/EXAMPLE/` (a captured run) |
 
 ---
@@ -283,10 +284,17 @@ cannot drift apart. The screen is three panels plus a status line:
   probability; verification PASS/FAIL; compaction verdicts; degradations and budget warnings.
 
 ```sh
-make run TUI=1 < issue.md                    # live, same headless run underneath
+make run < issue.md                          # the standard interface; TUI opens on a terminal
+make run TUI=1 < issue.md                    # force the TUI, same headless run underneath
+make run TUI=0 < issue.md                    # force the headless path
 make run TUI=1 ARGS="--dry-run" < issue.md   # TUI demo with no credentials
 make replay RUN=reports/LATEST               # open a finished run read-only (no model calls)
 ```
+
+`make run` is the launch command required by the submission guidelines: attached to a terminal it
+initialises the TUI; with the issue piped (the committee's supply path) it stays headless, so the
+visual layer can never interfere with evaluation. If the TUI dependencies are missing or it cannot
+start, `make run` falls back to the headless path automatically.
 
 Keys: `g` graph, `f` follow, `q` quit. The TUI needs `textual` + `tiktoken` (installed by
 `make setup`, non-fatally); without them `make run TUI=1` explains how to install them and the
@@ -355,7 +363,7 @@ the model was told about the omission via the `<compaction>` marker. With produc
 ## Testing
 
 ```sh
-make test          # 168 unit tests (no model calls) + mock-endpoint E2E on the fixture repo
+make test          # 173 unit tests (no model calls) + mock-endpoint E2E on the fixture repo
 make test-live     # the same E2E against the evaluator endpoint (needs credentials)
 make smoke         # trivial live task: create hello.txt containing done
 ```

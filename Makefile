@@ -40,6 +40,10 @@ ARGS        ?=
 BUDGET      ?=
 TUI         ?=
 RUN         ?=
+# TUI=1 -> force the live terminal UI, TUI=0 -> force headless. Default: the
+# entrypoint opens the TUI on an interactive terminal and stays headless when
+# the issue is piped (the committee path).
+TUI_ARGS    := $(if $(TUI),$(if $(filter 0 off no false,$(TUI)),--no-tui,--tui),)
 
 # ---------------------------------------------------------------------------
 help:
@@ -51,6 +55,7 @@ help:
 	@echo "  make run       run our entrypoint against a task (stdin or ISSUE=path)"
 	@echo "                 (only AI_API_KEY is required; MODEL_BASE_URL/MODEL_NAME optional)"
 	@echo "  make run TUI=1 same run, live terminal UI (graph + context panels; q quits)"
+	@echo "                 (interactive terminals open the TUI by default; TUI=0 forces headless)"
 	@echo "  make replay    open a finished run in the TUI (RUN=reports/LATEST default)"
 	@echo "  make test      unit tests + dry-run E2E on the fixture repo (no API calls),"
 	@echo "                 plus live E2E when creds are present"
@@ -130,7 +135,7 @@ run: venv-guard
 	 MODEL_BASE_URL=$${MODEL_BASE_URL} \
 	 MODEL_NAME=$${MODEL_NAME} \
 	 $(PY) -m harness.entrypoint \
-	 $(if $(TUI),--tui,) \
+	 $(TUI_ARGS) \
 	 $(if $(WORKSPACE),--workspace "$(WORKSPACE)",) \
 	 $(if $(ISSUE),--issue "$(ISSUE)",) \
 	 $(if $(BUDGET),--budget $(BUDGET),) $(ARGS)
