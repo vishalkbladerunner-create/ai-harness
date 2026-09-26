@@ -53,7 +53,9 @@ decision is auditable in the run report.
 * **Python ≥ 3.10** (the pinned upstream core requires it; macOS system Python is 3.9). `make setup`
   looks for `python3.12`/`3.13`/`3.11`/`3.10` on PATH and in the usual install locations; if the
   machine only has an older Python, it downloads `uv` into `.cache/tools` and provisions a
-  project-local CPython 3.12 automatically (`make setup BOOTSTRAP=python3.12` forces one).
+  project-local CPython 3.12 automatically (`make setup BOOTSTRAP=python3.12` forces one). An
+  existing `.venv` that was built with an older Python is detected and rebuilt on the next
+  `make setup`/`make run`, so a stale checkout cannot break setup.
 * Network access during `make setup` (pip + the optional laya checkpoint); `make run` needs only the
   model endpoint.
 

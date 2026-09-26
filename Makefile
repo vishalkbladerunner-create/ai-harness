@@ -30,7 +30,7 @@ VENV        := .venv
 BOOTSTRAP   ?=
 PY          := $(VENV)/bin/python
 PIP         := $(PY) -m pip
-VENV_STAMP  := $(VENV)/.ready
+
 CONSTRAINTS ?= constraints.txt
 
 # Entrypoint knobs (all optional; see README "Running the harness")
@@ -64,17 +64,31 @@ help:
 	@echo "  make run TUI=1 ARGS=\"--dry-run\" < issue.md   # TUI demo without credentials"
 
 # ---------------------------------------------------------------------------
-$(VENV_STAMP):
-	@if [ -n "$(BOOTSTRAP)" ]; then \
-		echo "== bootstrap interpreter (BOOTSTRAP override): $(BOOTSTRAP) =="; \
-		$(BOOTSTRAP) -m venv $(VENV); \
+# Every entry point depends on venv-guard: if .venv is missing or was built with
+# an unsupported Python (macOS system Python is 3.9), it is rebuilt with a
+# >= 3.10 interpreter (provisioned via uv if the machine has none) and the core
+# dependencies are installed. A healthy venv is a no-op (~50 ms).
+.PHONY: venv-guard
+venv-guard:
+	@if [ -x "$(PY)" ] && $(PY) -c 'import sys; raise SystemExit(0 if sys.version_info >= (3,10) else 1)' >/dev/null 2>&1; then \
+		:; \
 	else \
-		bash scripts/bootstrap_env.sh $(VENV); \
+		echo "== creating a usable venv (Python >= 3.10) =="; \
+		rm -rf $(VENV); \
+		BOOTSTRAP="$(BOOTSTRAP)" bash scripts/bootstrap_env.sh $(VENV); \
+		$(PIP) install --quiet --upgrade pip wheel setuptools; \
+		echo "== installing pinned mini-swe-agent (vendored, v2.4.6) =="; \
+		if [ -f "$(CONSTRAINTS)" ]; then \
+			$(PIP) install --quiet -c "$(CONSTRAINTS)" -e vendor/mini-swe-agent || \
+			$(PIP) install --quiet -e vendor/mini-swe-agent; \
+		else \
+			$(PIP) install --quiet -e vendor/mini-swe-agent; \
+		fi; \
+		$(PIP) install --quiet -e . --no-deps; \
+		$(PIP) install --quiet pytest; \
 	fi
-	$(PIP) install --quiet --upgrade pip wheel setuptools
-	@touch $@
 
-setup: $(VENV_STAMP)
+setup: venv-guard
 	@echo "== installing pinned mini-swe-agent (vendored, v2.4.6) =="
 	@if [ -f "$(CONSTRAINTS)" ]; then \
 		$(PIP) install --quiet -c "$(CONSTRAINTS)" -e vendor/mini-swe-agent || { \
@@ -111,7 +125,7 @@ setup: $(VENV_STAMP)
 	@echo ""
 	@echo "setup complete. Run 'make run' with AI_API_KEY / MODEL_BASE_URL / MODEL_NAME exported."
 
-run: $(VENV_STAMP)
+run: venv-guard
 	@AI_API_KEY=$${AI_API_KEY} \
 	 MODEL_BASE_URL=$${MODEL_BASE_URL} \
 	 MODEL_NAME=$${MODEL_NAME} \
@@ -122,18 +136,18 @@ run: $(VENV_STAMP)
 	 $(if $(BUDGET),--budget $(BUDGET),) $(ARGS)
 
 # Open a finished run in the TUI (no credentials, no model calls).
-replay: $(VENV_STAMP)
+replay: venv-guard
 	@$(PY) -m harness.entrypoint --tui --replay "$(if $(RUN),$(RUN),reports/LATEST)"
 
-test: $(VENV_STAMP)
+test: venv-guard
 	@$(MAKE) --no-print-directory test-unit
 	@$(MAKE) --no-print-directory test-e2e
 
-test-unit: $(VENV_STAMP)
+test-unit: venv-guard
 	@echo "== unit tests (no model calls) =="
 	$(PY) -m pytest tests/unit -q
 
-test-e2e: $(VENV_STAMP)
+test-e2e: venv-guard
 	@echo "== dry-run E2E on tests/fixture-repo (no API calls; local mock endpoint) =="
 	$(PY) scripts/e2e_fixture.py --mode mock
 	@if [ -n "$$AI_API_KEY" ] && [ -n "$$MODEL_BASE_URL" ] && [ -n "$$MODEL_NAME" ]; then \
@@ -143,10 +157,10 @@ test-e2e: $(VENV_STAMP)
 		echo "== live E2E SKIPPED (AI_API_KEY / MODEL_BASE_URL / MODEL_NAME not exported) =="; \
 	fi
 
-test-live: $(VENV_STAMP)
+test-live: venv-guard
 	$(PY) scripts/e2e_fixture.py --mode live
 
-smoke: $(VENV_STAMP)
+smoke: venv-guard
 	$(PY) scripts/smoke.py
 
 # Optional: prove the vendored core is byte-identical to the upstream tag.
