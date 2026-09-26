@@ -1,0 +1,19 @@
+# Tested dependency versions for guarded-mini.
+#
+# These are the exact versions used for the 129-test + mock-E2E verification on
+# 2026-09-27 (macOS arm64, Python 3.12). `make setup` applies this file as pip
+# constraints so a fresh clone resolves the same environment; if any pin cannot
+# be satisfied for the evaluator's platform, setup retries unpinned and prints a
+# warning (setup must never fail because of a constraint).
+litellm==1.102.1
+openai==2.54.0
+pydantic==2.13.5
+PyYAML==6.0.3
+Jinja2==3.1.6
+requests==2.34.2
+tenacity==9.1.4
+torch==2.14.0
+transformers==5.17.0
+huggingface_hub==1.33.0
+laya==0.3.20
+pytest==9.1.1

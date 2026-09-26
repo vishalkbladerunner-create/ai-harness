@@ -25,6 +25,7 @@ BOOTSTRAP   ?= $(shell for p in python3.13 python3.12 python3.11 python3.10 pyth
 PY          := $(VENV)/bin/python
 PIP         := $(PY) -m pip
 VENV_STAMP  := $(VENV)/.ready
+CONSTRAINTS ?= constraints.txt
 
 # Entrypoint knobs (all optional; see README "Running the harness")
 ISSUE       ?=
@@ -58,11 +59,21 @@ $(VENV_STAMP):
 
 setup: $(VENV_STAMP)
 	@echo "== installing pinned mini-swe-agent (vendored, v2.4.6) =="
-	$(PIP) install --quiet -e vendor/mini-swe-agent
+	@if [ -f "$(CONSTRAINTS)" ]; then \
+		$(PIP) install --quiet -c "$(CONSTRAINTS)" -e vendor/mini-swe-agent || { \
+			echo "   constrained install failed; retrying unpinned (setup must not fail on a pin)"; \
+			$(PIP) install --quiet -e vendor/mini-swe-agent; }; \
+	else \
+		$(PIP) install --quiet -e vendor/mini-swe-agent; \
+	fi
 	@echo "== installing harness package (editable, no deps) =="
 	$(PIP) install --quiet -e . --no-deps
 	@echo "== installing harness test deps =="
-	$(PIP) install --quiet pytest
+	@if [ -f "$(CONSTRAINTS)" ]; then \
+		$(PIP) install --quiet -c "$(CONSTRAINTS)" pytest || $(PIP) install --quiet pytest; \
+	else \
+		$(PIP) install --quiet pytest; \
+	fi
 	@if [ "$${SKIP_LAYA:-0}" = "1" ]; then \
 		echo "== laya sidecar: SKIPPED (SKIP_LAYA=1) — harness will run in degraded mode =="; \
 	else \

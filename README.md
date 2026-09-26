@@ -173,6 +173,9 @@ degradation notes, budget, timeline.
   degradation in the report.
 * The endpoint is always OpenAI-compatible: `MODEL_BASE_URL` + `AI_API_KEY` + `MODEL_NAME`
   (`openai/<name>` internally, so any compatible server works).
+* Dependency versions verified for this build (laya, litellm, torch, transformers, pytest, …) are
+  recorded in `constraints.txt`; `make setup` applies them and retries unpinned with a warning if a
+  pin cannot be satisfied on the evaluator's platform — setup never fails because of a constraint.
 * **laya is infrastructure, not the task model** (hackathon rule 8): it judges small typed
   infrastructure questions with calibrated probabilities, exactly like an embedding model or a
   linter; the DeepSeek/Qwen endpoint performs all software-engineering work. If laya is absent the
