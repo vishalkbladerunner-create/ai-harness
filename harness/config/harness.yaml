@@ -12,9 +12,14 @@
 version: 1
 
 agent:
-  # Upstream mini-swe-agent budgets (interpreted by the vendored core).
-  step_limit: 60
-  wall_time_limit_seconds: 1200
+  # Upstream mini-swe-agent limits (interpreted by the vendored core).
+  # 0 = unlimited, upstream's own convention: the model — not a wall clock —
+  # decides when the task is done (the OpenCode / Kimi Code / Pi posture).
+  # Runaway protection lives in the `budget` section below: soft nudges, a
+  # stall detector, and a token safety net instead of arbitrary step caps that
+  # truncate hard-but-winnable benchmark tasks.
+  step_limit: 0
+  wall_time_limit_seconds: 0
   max_consecutive_format_errors: 3
   # Upstream cost tracking is unreliable on custom OpenAI-compatible endpoints
   # (unknown price tables), so we budget on tokens instead of dollars; see
@@ -33,22 +38,24 @@ model:
   # take precedence and disable the fallback. This is provider discovery, not
   # model substitution: a key only authenticates against its own provider.
   provider_defaults:
-    - base_url: https://api.deepseek.com/v1
-      model_name: deepseek-chat
-      context_limit: 65536
-    # The account's /models list advertises these V4 names; they are tried if a
-    # DeepSeek key is accepted but `deepseek-chat` is not (HTTP 400/404).
+    # DeepSeek first (the committee's default provider). Model IDs follow the
+    # official docs (api-docs.deepseek.com): `deepseek-chat`/`deepseek-reasoner`
+    # were retired on 2026-07-24; the current IDs are `deepseek-flash`
+    # (V4.1-Flash) and `deepseek-v4-pro`, both 1M context.
     - base_url: https://api.deepseek.com/v1
       model_name: deepseek-flash
       context_limit: 1048576
     - base_url: https://api.deepseek.com/v1
       model_name: deepseek-v4-pro
       context_limit: 1048576
+    # Qwen via Alibaba Model Studio (DashScope OpenAI-compatible mode). Current
+    # IDs per the official model list (help.aliyun.com/model-studio): qwen3.7-plus
+    # and qwen3.8-max succeed the retired qwen-plus/qwen-max tiers.
     - base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
-      model_name: qwen-plus
+      model_name: qwen3.7-plus
       context_limit: 131072
     - base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
-      model_name: qwen-max
+      model_name: qwen3.8-max
       context_limit: 131072
   # Appended to whatever model_kwargs the entrypoint builds at runtime.
   # temperature/seed are the pinned values requested by rule 9.
@@ -64,13 +71,25 @@ model:
   request_timeout: 300
 
 budget:
-  # Hard, harness-enforced budgets. Exceeding one triggers a graceful
-  # best-effort exit (LimitsExceeded) with a summary, never a traceback.
-  max_steps: 60
-  max_llm_calls: 90
-  max_prompt_tokens: 1500000
-  max_completion_tokens: 200000
-  max_wall_seconds: 1200
+  # Budgets are safety nets, not task limits. Every limit is opt-in: 0 disables
+  # it. At `warn_fraction` of an enabled limit the agent receives a wrap-up
+  # notice in-context (it can still verify and submit); only at 100% does the
+  # run exit gracefully (LimitsExceeded) with partial results in the report.
+  # Evaluators who WANT a cap impose one without touching source:
+  #   make run BUDGET=20            # wall-clock minutes
+  #   make run ARGS="--max-steps 60"
+  max_steps: 0
+  max_llm_calls: 0
+  # Token nets catch true runaways; sized far above any plausible single task
+  # (~$2-5 at DeepSeek list prices), so they never decide a real benchmark task.
+  max_prompt_tokens: 15000000
+  max_completion_tokens: 1000000
+  max_wall_seconds: 0
+  warn_fraction: 0.8
+  # Stall detector: the identical action this many times in a row -> in-context
+  # nudge; twice that -> graceful "stuck" exit. This — not a raw step cap — is
+  # what actually terminates pathological loops in an unlimited-budget run.
+  stall_duplicate_limit: 5
 
 environment:
   # Default per-command timeout (upstream LocalEnvironment semantics).

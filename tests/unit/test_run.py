@@ -193,3 +193,54 @@ def test_without_anchor_judge_flags_are_report_only(tmp_path, monkeypatch):
     assert "junk.txt" in result.patch_path.read_text(encoding="utf-8")
     events = [json.loads(line) for line in result.telemetry_path.read_text().splitlines() if line.strip()]
     assert not any(e["kind"] == "patch_exclusions" for e in events)
+
+
+def test_stall_detection_nudges_then_exits(tmp_path, monkeypatch):
+    """The identical action repeated forever: nudge at the limit, stuck exit at 2x."""
+    from harness.config import load_harness_config
+
+    config = load_harness_config()
+    config["budget"]["stall_duplicate_limit"] = 2
+    monkeypatch.setattr("harness.run.load_harness_config", lambda: config)
+
+    ws = make_git_workspace(tmp_path)
+    scenario = [toolcall("true", "stuck loop") for _ in range(8)]
+    result = execute_run(
+        RunOptions(
+            issue=parse_issue("fix app.py", source="unit"),
+            workspace=ws,
+            reports_root=tmp_path / "reports",
+            dry_run=True,
+            scenario=scenario,
+        )
+    )
+    assert result.status == "limits_exceeded"
+    events = [json.loads(line) for line in result.telemetry_path.read_text().splitlines() if line.strip()]
+    assert any(e["kind"] == "stall_warning" for e in events)
+    assert any(e["kind"] == "harness_notice" for e in events), "the nudge must reach the model's context"
+    assert any("stuck" in (e.get("reason") or "") for e in events if e["kind"] == "budget_exhausted")
+    # the loop stopped long before the 8 scripted repetitions were consumed
+    steps = [e for e in events if e["kind"] == "step"]
+    assert len(steps) < 8
+
+
+def test_varied_actions_never_trigger_the_stall_detector(tmp_path, monkeypatch):
+    from harness.config import load_harness_config
+
+    config = load_harness_config()
+    config["budget"]["stall_duplicate_limit"] = 2
+    monkeypatch.setattr("harness.run.load_harness_config", lambda: config)
+
+    ws = make_git_workspace(tmp_path)
+    result = execute_run(
+        RunOptions(
+            issue=parse_issue("Create a marker file", source="unit"),
+            workspace=ws,
+            reports_root=tmp_path / "reports",
+            dry_run=True,
+            scenario=default_scenario(),
+        )
+    )
+    assert result.status == "submitted"
+    events = [json.loads(line) for line in result.telemetry_path.read_text().splitlines() if line.strip()]
+    assert not any(e["kind"] == "stall_warning" for e in events)

@@ -13,6 +13,10 @@ Two modes, both through `make run`:
            child process and tails the run's telemetry as it is written;
 * replay — ``make replay RUN=reports/LATEST`` opens a finished run read-only.
 
+On an interactive terminal, plain ``make run`` opens the TUI in *collect mode*:
+an input screen asks for the issue/test text (paste, then Enter) and only then
+starts the same headless child run — no raw Ctrl-D stdin prompt.
+
 The graph panel is a Rich tree rebuilt from ``git`` every couple of seconds
 (changed files highlighted), toggled with the ⬡ button or ``g``.
 """
@@ -24,14 +28,16 @@ import shutil
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 from rich.text import Text
-from textual import work
+from textual import on, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
-from textual.widgets import Button, Footer, Header, RichLog, Static
+from textual.message import Message
+from textual.widgets import Button, Footer, Header, RichLog, Static, TextArea
 
 from harness import HARNESS_NAME
 from harness.theme import BRAND_BRIGHT, BRAND_DARK, BRAND_WHITE, logo_markup
@@ -161,6 +167,27 @@ def git_snapshot(workspace: Path) -> dict | None:
 # ---------------------------------------------------------------------------
 # widgets
 # ---------------------------------------------------------------------------
+class IssueTextArea(TextArea):
+    """The collect-mode task box: multi-line paste, Enter submits.
+
+    Enter submits instead of inserting a newline; pasted text arrives as a
+    paste (not key presses), so a whole pasted issue keeps its newlines.
+    """
+
+    class Submitted(Message):
+        def __init__(self, text: str) -> None:
+            super().__init__()
+            self.text = text
+
+    async def _on_key(self, event) -> None:
+        if event.key == "enter":
+            event.prevent_default()
+            event.stop()
+            self.post_message(self.Submitted(self.text))
+            return
+        await super()._on_key(event)
+
+
 class ContextPanel(Static):
     """The /context-style split panel; fed from model_call/compaction events."""
 
@@ -209,12 +236,22 @@ class HarnessTUI(App):
     #log {{ height: 1fr; border: solid {BRAND_DARK}; }}
     #graph-panel {{ width: 44%; border: solid {BRAND_BRIGHT}; padding: 0 1; }}
     #status {{ height: 1; }}
+    #issue-view {{ height: 1fr; align: center middle; }}
+    #issue-box {{ width: 84; max-width: 90%; height: auto; border: solid {BRAND_BRIGHT}; padding: 1 2; }}
+    #issue-brand {{ content-align: center middle; }}
+    #issue-prompt {{ margin-top: 1; }}
+    #issue-input {{ height: 12; border: solid {BRAND_DARK}; margin: 1 0; }}
+    #issue-hint {{ color: $text-muted; }}
+    #issue-error {{ height: auto; color: $error; margin-top: 1; }}
     .hidden {{ display: none; }}
     """
     BINDINGS = [
         Binding("g", "toggle_graph", "graph", show=True),
         Binding("f", "toggle_follow", "follow", show=True),
         Binding("q", "quit", "quit", show=True),
+        # Priority so it also works while typing in the issue input (a plain
+        # "q" is legitimately text there).
+        Binding("ctrl+q", "quit", "quit", show=False, priority=True),
     ]
 
     def __init__(
@@ -226,6 +263,7 @@ class HarnessTUI(App):
         replay: Path | None = None,
         cwd: Path | None = None,
         env: dict | None = None,
+        collect_issue: Callable[[str], list[str]] | None = None,
     ):
         super().__init__()
         self.reports_root = Path(reports_root)
@@ -234,6 +272,9 @@ class HarnessTUI(App):
         self._replay = Path(replay).expanduser() if replay else None
         self._cwd = Path(cwd) if cwd else Path.cwd()
         self._env = dict(env) if env is not None else None
+        # Collect mode: the TUI asks for the issue itself, then builds the child
+        # command through this callback (parse + workspace resolve + staging).
+        self._collect_issue = collect_issue
 
         self._tail = JsonlTail()
         self._child: subprocess.Popen | None = None
@@ -241,11 +282,14 @@ class HarnessTUI(App):
         self._follow = True
 
         self._state: dict = {
-            "status": "replay" if self._replay else "starting",
+            "status": "replay" if self._replay else ("awaiting issue" if self._collect_issue else "starting"),
             "run_id": "",
             "steps": None,
             "max_steps": None,
             "tokens": None,
+            "tokens_in": None,
+            "tokens_out": None,
+            "tokens_cache": None,
             "wall_seconds": None,
             "model": "",
             "mode": "replay" if self._replay else "live",
@@ -258,19 +302,34 @@ class HarnessTUI(App):
 
     # ------------------------------------------------------------- lifecycle
     def compose(self) -> ComposeResult:
+        collect = self._collect_issue is not None
         yield Header()
         with Horizontal(id="titlebar"):
             yield Static(Text.from_markup(logo_markup()), id="brand")
             yield Button("⬡ Graph", id="toggle-graph")
-        with Horizontal(id="body"):
+        with Horizontal(id="body", classes="hidden" if collect else None):
             with Vertical(id="main"):
                 yield ContextPanel(id="context-panel")
                 yield RichLog(id="log", markup=False, wrap=True, max_lines=4000)
             yield GraphPanel(id="graph-panel")
-        yield Static(id="status")
+        yield Static(id="status", classes="hidden" if collect else None)
+        with Vertical(id="issue-view", classes=None if collect else "hidden"):
+            with Vertical(id="issue-box"):
+                yield Static(Text.from_markup(logo_markup()), id="issue-brand")
+                yield Static("Paste the evaluation issue / test case below, then press Enter.", id="issue-prompt")
+                yield IssueTextArea(id="issue-input")
+                yield Static("Enter runs the harness · multi-line paste is fine · Ctrl-Q quits", id="issue-hint")
+                yield Static("", id="issue-error")
         yield Footer()
 
     def on_mount(self) -> None:
+        if self._collect_issue is not None:
+            self.query_one("#issue-input", IssueTextArea).focus()
+            return
+        self._begin_viewing()
+
+    def _begin_viewing(self) -> None:
+        """Wire the live/replay view and start the refresh timers."""
         log = self.query_one("#log", RichLog)
         log.write(event_line({"kind": "harness", "note": "waiting for telemetry…"}))
         self.query_one(ContextPanel).show_split(None, 0, 0, 0)
@@ -388,6 +447,44 @@ class HarnessTUI(App):
             self._state["status"] = "exited" if code else "done"
         self._refresh_status()
 
+    # ------------------------------------------------------------- collect mode
+    @on(IssueTextArea.Submitted)
+    def _on_issue_submitted(self, event: IssueTextArea.Submitted) -> None:
+        text = event.text.strip()
+        if not text:
+            self._issue_note("the issue text is empty — paste the task first")
+            return
+        self.query_one("#issue-input", IssueTextArea).disabled = True
+        self._issue_note("preparing the run… (resolving the workspace)")
+        self._collect_and_run(text)
+
+    @work(thread=True, exclusive=True, group="harness-collect")
+    def _collect_and_run(self, text: str) -> None:
+        try:
+            argv = self._collect_issue(text)
+        except Exception as exc:  # noqa: BLE001 - show the usage error, keep the UI alive
+            self._post(self._collect_failed, str(exc))
+            return
+        self._post(self._start_child, argv)
+
+    def _collect_failed(self, message: str) -> None:
+        self._issue_note(f"error: {message}")
+        self.query_one("#issue-input", IssueTextArea).disabled = False
+
+    def _issue_note(self, text: str) -> None:
+        # from_markup: collect errors may carry light styling (bold/dim); plain
+        # strings pass through unchanged.
+        self.query_one("#issue-error", Static).update(Text.from_markup(text))
+
+    def _start_child(self, argv: list[str]) -> None:
+        """The issue is collected and staged: swap the input view for the live view."""
+        self._child_argv = argv
+        self.query_one("#issue-view").add_class("hidden")
+        self.query_one("#body").remove_class("hidden")
+        self.query_one("#status").remove_class("hidden")
+        self._state["status"] = "starting"
+        self._begin_viewing()
+
     # ------------------------------------------------------------- stream
     def _poll_events(self) -> None:
         if self._tail.path is None and self._replay is None:
@@ -416,6 +513,9 @@ class HarnessTUI(App):
                 self._limit = int(split.get("limit") or self._limit)
             usage = event.get("usage") or {}
             self._state["tokens"] = (self._state.get("tokens") or 0) + int(usage.get("total_tokens") or 0)
+            self._state["tokens_in"] = (self._state.get("tokens_in") or 0) + int(usage.get("prompt_tokens") or 0)
+            self._state["tokens_out"] = (self._state.get("tokens_out") or 0) + int(usage.get("completion_tokens") or 0)
+            self._state["tokens_cache"] = (self._state.get("tokens_cache") or 0) + int(usage.get("cache_hit_tokens") or 0)
         elif kind == "compaction":
             if not event.get("shadow"):
                 self._passes += 1
@@ -482,6 +582,7 @@ def run_tui(
     replay: Path | None = None,
     cwd: Path | None = None,
     env: dict | None = None,
+    collect_issue: Callable[[str], list[str]] | None = None,
 ) -> int | None:
     """Run the TUI to completion; returns the exit code to propagate.
 
@@ -499,6 +600,7 @@ def run_tui(
         replay=replay,
         cwd=cwd,
         env=env,
+        collect_issue=collect_issue,
     )
     try:
         app.run()

@@ -30,14 +30,13 @@ def test_default_chain_is_deepseek_then_qwen(monkeypatch):
     _clear_model_env(monkeypatch)
     chain = provider_chain(load_harness_config(), read_env())
     assert [entry["model_name"] for entry in chain] == [
-        "deepseek-chat",
         "deepseek-flash",
         "deepseek-v4-pro",
-        "qwen-plus",
-        "qwen-max",
+        "qwen3.7-plus",
+        "qwen3.8-max",
     ]
     assert chain[0]["base_url"].startswith("https://api.deepseek.com")
-    assert "dashscope" in chain[3]["base_url"]
+    assert "dashscope" in chain[2]["base_url"]
 
 
 def test_explicit_env_wins_and_disables_fallback(monkeypatch):
@@ -51,9 +50,9 @@ def test_explicit_env_wins_and_disables_fallback(monkeypatch):
 
 def test_model_name_infers_the_qwen_endpoint(monkeypatch):
     _clear_model_env(monkeypatch)
-    monkeypatch.setenv("MODEL_NAME", "qwen-max")
+    monkeypatch.setenv("MODEL_NAME", "qwen3.8-max")
     chain = provider_chain(load_harness_config(), read_env())
-    assert chain[0]["model_name"] == "qwen-max"
+    assert chain[0]["model_name"] == "qwen3.8-max"
     assert "dashscope" in chain[0]["base_url"]
 
 
@@ -61,17 +60,16 @@ def test_base_url_infers_the_model_name(monkeypatch):
     _clear_model_env(monkeypatch)
     monkeypatch.setenv("MODEL_BASE_URL", "https://api.deepseek.com/v1")
     chain = provider_chain(load_harness_config(), read_env())
-    assert chain[0]["model_name"] == "deepseek-chat"
+    assert chain[0]["model_name"] == "deepseek-flash"
 
 
 def test_build_model_config_prefixes_provider_and_keeps_chain(monkeypatch):
     _clear_model_env(monkeypatch)
     cfg = build_model_config(load_harness_config(), read_env())
-    assert cfg["model_name"] == "openai/deepseek-chat"
+    assert cfg["model_name"] == "openai/deepseek-flash"
     assert cfg["model_kwargs"]["api_key"] == "sk-test-key-1234567890"
     assert [entry["model_name"] for entry in cfg["provider_chain"]] == [
-        "openai/deepseek-flash",
         "openai/deepseek-v4-pro",
-        "openai/qwen-plus",
-        "openai/qwen-max",
+        "openai/qwen3.7-plus",
+        "openai/qwen3.8-max",
     ]

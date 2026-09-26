@@ -56,3 +56,21 @@ def test_budget_event_emitted_on_telemetry():
         tracker.check()
     assert telemetry.events_of("budget_exhausted")
     telemetry.close()
+
+
+def test_soft_warning_fires_once_at_threshold():
+    tracker = make(max_steps=10, warn_fraction=0.8)
+    tracker.state.steps = 7
+    assert tracker.warnings() == []
+    tracker.state.steps = 8
+    warnings = tracker.warnings()
+    assert len(warnings) == 1
+    assert "step budget 8/10" in warnings[0]
+    assert tracker.warnings() == []  # each limit nudges once per run
+
+
+def test_unlimited_budgets_never_warn():
+    tracker = make(max_steps=0, max_prompt_tokens=0, max_wall_seconds=0)
+    tracker.state.steps = 10**6
+    tracker.state.prompt_tokens = 10**9
+    assert tracker.warnings() == []

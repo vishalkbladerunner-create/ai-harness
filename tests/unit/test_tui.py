@@ -99,6 +99,21 @@ def test_status_line_reports_budget_and_mode():
         assert needle in text, needle
 
 
+def test_status_line_shows_input_output_and_cache_tokens():
+    text = status_line(
+        {
+            "status": "running",
+            "tokens": 12400,
+            "tokens_in": 10100,
+            "tokens_out": 2300,
+            "tokens_cache": 6300,
+            "mode": "live",
+        }
+    ).plain
+    for needle in ("tok 12,400", "in 10,100", "cache 6,300", "out 2,300"):
+        assert needle in text, needle
+
+
 # ---------------------------------------------------------------------------
 # git graph
 # ---------------------------------------------------------------------------
@@ -262,3 +277,117 @@ def test_auto_tui_requires_a_terminal(monkeypatch):
     monkeypatch.setattr(ep.sys, "stdin", _Stream(True))
     monkeypatch.setenv("TERM", "xterm-256color")
     assert ep._should_use_tui("auto") is True
+
+
+# ---------------------------------------------------------------------------
+# collect mode: interactive `make run` asks for the issue inside the TUI
+# ---------------------------------------------------------------------------
+def test_tui_collect_mode_submits_the_issue_and_starts_the_run(tmp_path):
+    import time
+
+    from harness.tui import IssueTextArea
+
+    built: list[str] = []
+
+    def collect(text: str) -> list[str]:
+        built.append(text)
+        return [sys.executable, "-c", "import time; time.sleep(60)"]
+
+    app = HarnessTUI(reports_root=tmp_path, cwd=tmp_path, collect_issue=collect)
+
+    async def smoke() -> None:
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            # the input screen is up, the live view is hidden, no child yet
+            assert app.query_one("#issue-view").display is not False
+            assert app.query_one("#body").display is False
+            assert app._child is None
+            # an empty submit only nags; it must not build a run
+            await pilot.press("enter")
+            await pilot.pause()
+            assert "empty" in str(app.query_one("#issue-error").render())
+            assert not built
+            # a multi-line task submits on Enter, newlines intact
+            textarea = app.query_one("#issue-input", IssueTextArea)
+            textarea.text = "Fix the off-by-one in buggy.py\nSee tests/test_buggy.py"
+            await pilot.press("enter")
+            for _ in range(30):
+                await pilot.pause(0.2)
+                if app._child is not None:
+                    break
+            assert built == ["Fix the off-by-one in buggy.py\nSee tests/test_buggy.py"]
+            assert app._child is not None and app._child.poll() is None
+            # the input screen is gone, the live view is up
+            assert app.query_one("#issue-view").display is False
+            assert app.query_one("#body").display is not False
+            await pilot.press("q")
+            await pilot.pause(0.5)
+
+    asyncio.run(smoke())
+    assert app.final_code == 130
+    for _ in range(30):
+        if app._child.poll() is not None:
+            break
+        time.sleep(0.1)
+    assert app._child.poll() is not None, "the harness child must not outlive the TUI"
+
+
+def test_tui_collect_mode_shows_collect_errors_and_keeps_the_input_alive(tmp_path):
+    from harness.tui import IssueTextArea
+
+    def collect(text: str) -> list[str]:
+        raise ValueError("workspace is not a directory: /nope")
+
+    app = HarnessTUI(reports_root=tmp_path, cwd=tmp_path, collect_issue=collect)
+
+    async def smoke() -> None:
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            textarea = app.query_one("#issue-input", IssueTextArea)
+            textarea.text = "Fix the thing"
+            await pilot.press("enter")
+            for _ in range(30):
+                await pilot.pause(0.1)
+                if "workspace is not a directory" in str(app.query_one("#issue-error").render()):
+                    break
+            assert "workspace is not a directory" in str(app.query_one("#issue-error").render())
+            assert not app.query_one("#issue-input", IssueTextArea).disabled
+            assert app._child is None
+            app.action_quit()
+
+    asyncio.run(smoke())
+
+
+# ---------------------------------------------------------------------------
+# collect callback: the missing-key path asks the user to connect, politely
+# ---------------------------------------------------------------------------
+def test_collect_without_api_key_asks_to_connect(monkeypatch, tmp_path):
+    import pytest
+
+    from harness.entrypoint import _make_collect
+    from harness.run import UsageError
+
+    monkeypatch.delenv("AI_API_KEY", raising=False)
+    collect = _make_collect(_args(), str(tmp_path))
+    with pytest.raises(UsageError) as excinfo:
+        collect("fix the failing test")
+    message = str(excinfo.value)
+    assert "Connect the API first" in message
+    assert "export AI_API_KEY=" in message
+    assert "DeepSeek" in message and "Qwen" in message
+
+
+def test_collect_with_dry_run_needs_no_key(monkeypatch, tmp_path):
+    from harness.entrypoint import _make_collect
+
+    monkeypatch.delenv("AI_API_KEY", raising=False)
+    argv = _make_collect(_args("--dry-run", "--workspace", str(tmp_path)), str(tmp_path))("fix the failing test")
+    assert argv[0] == sys.executable and "--issue" in argv
+
+
+def test_collect_with_key_builds_the_child_command(monkeypatch, tmp_path):
+    from harness.entrypoint import _make_collect
+
+    monkeypatch.setenv("AI_API_KEY", "sk-test-key-1234567890")
+    argv = _make_collect(_args("--workspace", str(tmp_path)), str(tmp_path))("fix the failing test")
+    assert argv[0] == sys.executable and "--workspace" in argv

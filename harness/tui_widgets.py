@@ -232,7 +232,15 @@ def status_line(state: dict) -> Text:
         max_steps = state.get("max_steps") or 0
         parts.append(f"step {state['steps']}" + (f"/{max_steps}" if max_steps else ""))
     if state.get("tokens") is not None:
-        parts.append(f"tok {int(state['tokens']):,}")
+        token_part = f"tok {int(state['tokens']):,}"
+        detail = []
+        if state.get("tokens_in"):
+            detail.append(f"in {int(state['tokens_in']):,}")
+        if state.get("tokens_cache"):
+            detail.append(f"cache {int(state['tokens_cache']):,}")
+        if state.get("tokens_out"):
+            detail.append(f"out {int(state['tokens_out']):,}")
+        parts.append(token_part + (f" ({' · '.join(detail)})" if detail else ""))
     if state.get("wall_seconds") is not None:
         parts.append(f"wall {state['wall_seconds']}s")
     if state.get("model"):

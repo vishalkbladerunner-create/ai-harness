@@ -4,8 +4,10 @@ guarded-mini entrypoint — the process `make run` launches.
 
 Why it exists: the evaluator's workflow is git clone -> export creds -> make setup
 -> make run -> feed an issue. This file is the contract: it reads the task from
-stdin or a file, reads credentials from the environment only, runs the harness
-unattended, prints the result and writes reports/. It never prompts.
+stdin or a file (on an interactive terminal the TUI collects it in an input
+field), reads credentials from the environment only, runs the harness
+unattended, prints the result and writes reports/. It never prompts on the
+piped evaluation path.
 
 Hackathon criteria served: compliance 1/2 (make run launches OUR entrypoint),
 Phase 0.3 (accept the evaluation task, run end-to-end, write the run report),
@@ -17,6 +19,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -86,8 +89,10 @@ def build_parser() -> argparse.ArgumentParser:
 def _read_stdin() -> str | None:
     """Read the task from stdin. Piped input is read directly; a TTY is prompted.
 
-    The evaluator "feeds a GitHub issue/test case to the running harness": that can
-    be a pipe (`make run < issue.md`) or an interactive paste followed by Ctrl-D.
+    The evaluator "feeds a GitHub issue/test case to the running harness": that is
+    a pipe (`make run < issue.md`) on the scripted path. The interactive paste
+    prompt here is only the fallback for terminals where the TUI cannot start —
+    normally the TUI collects the task in its own input field instead.
     """
     if sys.stdin is None:
         return None
@@ -206,6 +211,70 @@ def _launch_tui(args, options: RunOptions | None, issue) -> int | None:
     )
 
 
+CONNECT_API_MESSAGE = (
+    "[bold]Connect the API first.[/bold]\n"
+    "Run this command with your API key, then submit again:\n\n"
+    "  [bold]export AI_API_KEY=<your-api-key>[/bold]\n\n"
+    "[dim]We only support the official DeepSeek and Qwen APIs right now — the harness "
+    "automatically detects which one your key belongs to (try 'make doctor' to check).[/dim]"
+)
+
+
+def _make_collect(args, workspace_arg: str | None):
+    """Build the TUI collect-mode callback (importable for tests).
+
+    The callback runs inside the TUI when the user submits the issue: parse the
+    task, verify the credential is present (dry-runs need none), resolve the
+    workspace and stage the child command. Any exception is shown on the input
+    screen, never as a traceback.
+    """
+
+    def collect(issue_text: str) -> list[str]:
+        issue = load_issue(None, stdin_text=issue_text)
+        if not args.dry_run and not os.environ.get("AI_API_KEY"):
+            raise UsageError(CONNECT_API_MESSAGE)
+        options = RunOptions(
+            issue=issue,
+            workspace=resolve_workspace(workspace_arg, issue, force=args.force),
+            budget_minutes=args.budget,
+            max_steps=args.max_steps,
+            verify_mode=args.verify,
+            dry_run=args.dry_run,
+            scenario=_load_scenario(args.scenario),
+            force=args.force,
+            quiet=True,
+        )
+        return _tui_child_command(args, options, issue)
+
+    return collect
+
+
+def _launch_tui_collect(args, workspace_arg: str | None) -> int | None:
+    """Interactive `make run` with no issue file: the TUI collects the task.
+
+    Returns the run's exit code, or None when the TUI cannot start (the caller
+    then falls back to the classic stdin prompt). The issue-dependent work —
+    parsing, workspace resolution, staging — happens inside the TUI via the
+    ``collect`` callback, so the input screen can show errors and stay alive.
+    """
+    import os
+
+    run_tui = _import_run_tui(soft=not args.tui)
+    if run_tui is None:
+        return None
+
+    env = dict(os.environ)
+    env["PYTHONPATH"] = os.pathsep.join(
+        [str(CONFIG_REPO_ROOT)] + ([env["PYTHONPATH"]] if env.get("PYTHONPATH") else [])
+    )
+    return run_tui(
+        reports_root=CONFIG_REPO_ROOT / "reports",
+        collect_issue=_make_collect(args, workspace_arg),
+        cwd=Path.cwd(),
+        env=env,
+    )
+
+
 def _tui_mode(args) -> str:
     """Resolve --tui/--no-tui into on / off / auto (default: auto)."""
     if args.tui and args.no_tui:
@@ -259,8 +328,22 @@ def main(argv: list[str] | None = None) -> int:
     if not args.quiet and not use_tui:
         print_banner()
 
-    # Task: explicit file wins, then positional path, then stdin.
+    import os
+
+    workspace_arg = args.workspace or os.environ.get("HARNESS_WORKSPACE") or None
     issue_arg = args.issue_file or args.issue_path
+
+    # Interactive `make run` with no issue file: the TUI asks for the task in its
+    # own input field (paste + Enter) instead of a raw Ctrl-D stdin prompt.
+    if not issue_arg and use_tui and sys.stdin is not None and sys.stdin.isatty():
+        code = _launch_tui_collect(args, workspace_arg)
+        if code is not None:
+            return code
+        if mode == "on":
+            return EXIT_USAGE
+        print(f"[{HARNESS_NAME}] note: TUI unavailable; falling back to the stdin prompt.", file=sys.stderr)
+
+    # Task: explicit file wins, then positional path, then stdin.
     try:
         issue = load_issue(issue_arg, stdin_text=None if issue_arg else _read_stdin())
     except (FileNotFoundError, ValueError) as exc:
@@ -268,9 +351,6 @@ def main(argv: list[str] | None = None) -> int:
         print("usage: make run < issue.md   |   make run ISSUE=issue.md", file=sys.stderr)
         return EXIT_USAGE
 
-    import os
-
-    workspace_arg = args.workspace or os.environ.get("HARNESS_WORKSPACE") or None
     try:
         options = RunOptions(
             issue=issue,

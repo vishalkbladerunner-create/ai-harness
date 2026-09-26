@@ -5,7 +5,8 @@
 #   git clone <this repo> && cd <repo>
 #   export AI_API_KEY=...        # the only variable the committee exports
 #   make setup
-#   make run            # task arrives on stdin (or ISSUE=path)
+#   make run            # interactive: TUI asks for the task (paste + Enter);
+#                       # scripted: the task arrives on stdin (or ISSUE=path)
 #
 # MODEL_BASE_URL / MODEL_NAME are optional: checked-in provider defaults
 # (DeepSeek then Qwen) are used when they are absent.
@@ -52,15 +53,17 @@ help:
 	@echo "  make setup     create .venv, install pinned mini-swe-agent (vendored) + deps,"
 	@echo "                 install laya + checkpoint (both NON-FATAL, cached)"
 	@echo "                 (finds Python >= 3.10; provisions a managed CPython via uv if absent)"
-	@echo "  make run       run our entrypoint against a task (stdin or ISSUE=path)"
+	@echo "  make run       run our entrypoint against a task (stdin or ISSUE=path;"
+	@echo "                 interactive terminals get a TUI input field for the issue)"
 	@echo "                 (only AI_API_KEY is required; MODEL_BASE_URL/MODEL_NAME optional)"
 	@echo "  make run TUI=1 same run, live terminal UI (graph + context panels; q quits)"
 	@echo "                 (interactive terminals open the TUI by default; TUI=0 forces headless)"
 	@echo "  make replay    open a finished run in the TUI (RUN=reports/LATEST default)"
-	@echo "  make test      unit tests + dry-run E2E on the fixture repo (no API calls),"
-	@echo "                 plus live E2E when creds are present"
+	@echo "  make test      unit tests + dry-run E2E on the fixture repo (no API calls;"
+	@echo "                 E2E_LIVE=1 adds one live pass on your own credential)"
 	@echo "  make test-live force the live eval against tests/fixture-repo (needs creds)"
 	@echo "  make smoke     one trivial live task: create hello.txt containing done"
+	@echo "  make doctor    probe DeepSeek + Qwen with your AI_API_KEY (auth + model IDs)"
 	@echo "  make clean     remove .venv, caches, generated reports"
 	@echo ""
 	@echo "  make run ISSUE=path/to/issue.md WORKSPACE=/path/to/target-repo"
@@ -155,11 +158,16 @@ test-unit: venv-guard
 test-e2e: venv-guard
 	@echo "== dry-run E2E on tests/fixture-repo (no API calls; local mock endpoint) =="
 	$(PY) scripts/e2e_fixture.py --mode mock
-	@if [ -n "$$AI_API_KEY" ] && [ -n "$$MODEL_BASE_URL" ] && [ -n "$$MODEL_NAME" ]; then \
-		echo "== live E2E on tests/fixture-repo (creds present) =="; \
-		$(PY) scripts/e2e_fixture.py --mode live || exit 1; \
+	@if [ "$${E2E_LIVE:-0}" = "1" ]; then \
+		if [ -n "$$AI_API_KEY" ]; then \
+			echo "== live E2E on tests/fixture-repo (E2E_LIVE=1; spends the exported credential) =="; \
+			$(PY) scripts/e2e_fixture.py --mode live || exit 1; \
+		else \
+			echo "== live E2E REQUESTED but SKIPPED (AI_API_KEY not exported) =="; \
+		fi \
 	else \
-		echo "== live E2E SKIPPED (AI_API_KEY / MODEL_BASE_URL / MODEL_NAME not exported) =="; \
+		echo "== live E2E SKIPPED (opt in with: E2E_LIVE=1 make test, or make test-live) =="; \
+		echo "   the evaluation run never spends the evaluator's credential from make test"; \
 	fi
 
 test-live: venv-guard
@@ -167,6 +175,10 @@ test-live: venv-guard
 
 smoke: venv-guard
 	$(PY) scripts/smoke.py
+
+# Pre-flight: which official provider accepts the exported AI_API_KEY (no run).
+doctor: venv-guard
+	@$(PY) scripts/check_providers.py
 
 # Optional: prove the vendored core is byte-identical to the upstream tag.
 check-upstream:
@@ -191,4 +203,4 @@ clean:
 	find reports -mindepth 1 -maxdepth 1 ! -name '.gitkeep' ! -name 'EXAMPLE' -print -exec rm -rf {} + 2>/dev/null || true
 	@echo "clean complete (reports/EXAMPLE is kept as the reference artefact)."
 
-.PHONY: help setup run replay test test-unit test-e2e test-live smoke clean check-upstream check-clean-env
+.PHONY: help setup run replay test test-unit test-e2e test-live smoke doctor clean check-upstream check-clean-env

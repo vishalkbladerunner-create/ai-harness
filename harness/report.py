@@ -310,10 +310,17 @@ def render_report(ctx: dict) -> str:
         parts.append(_section("Degradation notes", "_None: every layer ran in its primary mode._"))
 
     budget = ctx.get("budget") or {}
+
+    def _budget_value(key: str, value) -> str:
+        # 0 is the "no cap" convention for every max_* limit (see harness.yaml).
+        if key.startswith("max_") and not value:
+            return "unlimited"
+        return str(value)
+
     parts.append(
         _section(
             "Budget",
-            _table([[k, str(v)] for k, v in budget.items()], ["limit", "value"]),
+            _table([[k, _budget_value(k, v)] for k, v in budget.items()], ["limit", "value"]),
         )
     )
 

@@ -155,7 +155,7 @@ def provider_chain(config: dict, env: dict[str, str]) -> list[dict]:
     * ``MODEL_BASE_URL`` + ``MODEL_NAME`` both set -> exactly that endpoint
       (no fallback: the prescribed model is respected verbatim).
     * only one of them set -> the other is inferred from the checked-in
-      defaults (e.g. ``MODEL_NAME=qwen-max`` picks the DashScope URL).
+      defaults (e.g. ``MODEL_NAME=qwen3.8-max`` picks the DashScope URL).
     * neither set -> the checked-in chain (DeepSeek first, then Qwen). The key
       only authenticates against its own provider, so the harness discovers the
       right one instead of failing on a 401; this is provider discovery, not

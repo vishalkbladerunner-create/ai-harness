@@ -189,11 +189,11 @@ list. Its evidence (the fixture study) is in the README appendix; live is only e
 
 | check | command | result |
 |---|---|---|
-| unit + mock E2E | `make test` | 173 passed; fixture E2E PASS (submitted / tests pass / report / patch / telemetry / no credential in artefacts) |
+| unit + mock E2E | `make test` | 185 passed; fixture E2E PASS (submitted / tests pass / report / patch / telemetry / no credential in artefacts) |
 | vendored-core purity | `make check-upstream` | `vendored core == upstream v2.4.6 (byte-identical)` |
 | fresh copy, degraded path | `scripts/clean_env_check.sh --skip-laya` | `make setup` + `make test` PASS (heuristic judge, no laya) |
 | fresh copy, full path | `scripts/clean_env_check.sh` | `make setup` (laya install + checkpoint) + `make test` PASS |
-| live endpoint | `make smoke`, `make test-live` | **BLOCKED**: credentials are not exported in the build shell; the user runs this once the evaluator's env vars are present |
+| live endpoint | `make doctor`, `make smoke`, `make test-live` | PASS (2026-09-27, DeepSeek `deepseek-flash`): key auth + model advertised; smoke submitted (tool calling live); fixture E2E submitted — the live model fixed the off-by-one, verification loop ran pytest green, patch captured, guardrails/injection scans active, no credential in artefacts; usage accounting incl. cache-hit tokens verified (91% of input tokens were cache hits) |
 
 The degraded-path check is deliberate: with laya unavailable the whole harness still runs on the
 documented heuristics and all tests pass — that is the fallback-first requirement, verified.

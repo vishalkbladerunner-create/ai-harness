@@ -77,6 +77,14 @@ def extract_usage(message: dict) -> dict:
     prompt = _num(pick(raw, "prompt_tokens", "input_tokens"))
     completion = _num(pick(raw, "completion_tokens", "output_tokens"))
     total = _num(pick(raw, "total_tokens"))
+    # Cache accounting: DeepSeek reports flat prompt_cache_hit/miss_tokens; the
+    # OpenAI shape nests cached_tokens under prompt_tokens_details. Cache hits
+    # are billed far cheaper, so they are worth surfacing (efficiency criterion).
+    details = raw.get("prompt_tokens_details") if isinstance(raw, dict) else getattr(raw, "prompt_tokens_details", None)
+    cache_hit = _num(pick(raw, "prompt_cache_hit_tokens"))
+    if cache_hit is None and details is not None:
+        cache_hit = _num(details.get("cached_tokens") if isinstance(details, dict) else getattr(details, "cached_tokens", None))
+    cache_miss = _num(pick(raw, "prompt_cache_miss_tokens"))
     if prompt is None and completion is None:
         text = "".join(str(m.get("content") or "") for m in message.get("extra", {}).get("prompt_messages", []))
         approx = max(1, len(text) // 4)
@@ -84,6 +92,8 @@ def extract_usage(message: dict) -> dict:
             "prompt_tokens": approx,
             "completion_tokens": max(1, len(str(message.get("content") or "")) // 4),
             "total_tokens": approx + max(1, len(str(message.get("content") or "")) // 4),
+            "cache_hit_tokens": 0,
+            "cache_miss_tokens": 0,
             "estimated": True,
         }
     prompt = prompt or 0
@@ -93,6 +103,8 @@ def extract_usage(message: dict) -> dict:
         "prompt_tokens": prompt,
         "completion_tokens": completion,
         "total_tokens": total,
+        "cache_hit_tokens": cache_hit or 0,
+        "cache_miss_tokens": cache_miss or 0,
         "estimated": False,
     }
 
@@ -108,6 +120,10 @@ class HarnessModel(LitellmModel):
         self._telemetry = telemetry
         self._degradations: list[str] = []
         self._provider_chain = [dict(entry) for entry in (provider_chain or [])]
+        # Discovery mode: a fallback chain exists (only when the evaluator exported
+        # nothing but AI_API_KEY). It decides which "all providers failed" message
+        # the user gets — explicit endpoints keep the generic one.
+        self._discovery = bool(self._provider_chain)
         # Context window for the split panel/report; from checked-in config,
         # never hard-coded (provider defaults differ: DeepSeek 64K, Qwen 128K).
         self._context_limit = int(context_limit or 0)
@@ -173,6 +189,22 @@ class HarnessModel(LitellmModel):
         if self._telemetry is not None:
             self._telemetry.degrade("model", reason)
 
+    def _all_providers_failed_message(self) -> str:
+        """Chain exhausted: the plain-English 'what now' (never contains the key)."""
+        if self._discovery:
+            return (
+                "the credential was rejected by every checked-in provider (DeepSeek and Qwen). "
+                "This harness works only with the official DeepSeek API (https://api.deepseek.com) "
+                "and the official Qwen API (Alibaba DashScope, https://dashscope.aliyuncs.com/compatible-mode/v1). "
+                "Check that AI_API_KEY is a valid key for one of them (run 'make doctor' to probe both); "
+                "the key is never logged."
+            )
+        return (
+            "model endpoint rejected the credential (AuthenticationError). "
+            "This harness works only with the official DeepSeek and Qwen APIs; "
+            "check that AI_API_KEY matches MODEL_BASE_URL. The value is never logged."
+        )
+
     # -- accounting + telemetry --------------------------------------------
     def query(self, messages: list[dict], **kwargs) -> dict:
         started = time.time()
@@ -200,10 +232,11 @@ class HarnessModel(LitellmModel):
                 return self.query(messages, **kwargs)
             if isinstance(exc, litellm.exceptions.AuthenticationError):
                 # Never echo key material in an error path.
-                raise RuntimeError(
-                    "model endpoint rejected the credential (AuthenticationError). "
-                    "Check that AI_API_KEY matches MODEL_BASE_URL; the value is never logged."
-                ) from None
+                raise RuntimeError(self._all_providers_failed_message()) from None
+            if self._discovery:
+                # 404 from every checked-in provider: the endpoint serves none of
+                # the official models — say what is actually supported.
+                raise RuntimeError(self._all_providers_failed_message()) from None
             raise
         except litellm.exceptions.BadRequestError as exc:
             text = str(exc).lower()
