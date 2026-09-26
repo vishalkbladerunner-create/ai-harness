@@ -190,3 +190,22 @@ def test_disabled_compactor_passes_through(tmp_path):
     assert compactor.enabled is False
     messages = conversation()
     assert compactor.select(messages) is messages
+
+
+def test_judge_source_reports_the_active_judge(tmp_path):
+    """Regression: heuristic fallback used to be logged as judge_source=laya."""
+
+    class HeuristicStub(StubJudge):
+        source = "heuristic"
+
+        def judge_batch(self, states, questions):
+            results = super().judge_batch(states, questions)
+            for result in results:
+                result["source"] = "heuristic"
+            return results
+
+    compactor = make_compactor(tmp_path, HeuristicStub("keep"))
+    compactor.select(conversation())
+    events = compactor.telemetry.events_of("compaction")
+    assert events and events[0]["judge_source"] == "heuristic"
+    assert all(v["source"] == "heuristic" for v in events[0]["verdicts"])

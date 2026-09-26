@@ -148,15 +148,26 @@ def is_git_repo(path: Path) -> bool:
     return (path / ".git").exists() and shutil.which("git") is not None
 
 
-def collect_changes(workspace: Path, patch_path: Path) -> dict:
-    """Return changed files, diff text and the written patch artefact."""
+def collect_changes(workspace: Path, patch_path: Path, exclude_paths: set[str] | None = None) -> dict:
+    """Return changed files, diff text and the written patch artefact.
+
+    ``exclude_paths`` removes specific paths from the *patch artefact only* (the
+    workspace is left untouched). The scope guard uses this for changes it flagged
+    as out of scope but deliberately did not roll back.
+    """
     if not is_git_repo(workspace):
         return {"files": [], "diff": "", "path": "", "note": "workspace is not a git checkout; no patch captured"}
 
     from harness.guardrails.scope import CACHE_PATTERNS
 
+    excluded = {p for p in (exclude_paths or set()) if p}
+
     def ignored(path: str) -> bool:
         return any(fnmatch.fnmatch(path, pattern) for pattern in CACHE_PATTERNS) or path == ".guarded-mini-marker"
+
+    def pathspecs() -> list[str]:
+        # `-- .` keeps at least one positive pathspec; excludes are literal paths.
+        return ["--", "."] + [f":(exclude){path}" for path in sorted(excluded)]
 
     status = _git(workspace, "status", "--porcelain=v1", "-uall")
     files: list[dict] = []
@@ -167,13 +178,13 @@ def collect_changes(workspace: Path, patch_path: Path) -> dict:
         code, path = line[:2].strip(), line[3:].strip()
         if path.startswith('"') and path.endswith('"'):
             path = path[1:-1]
-        if ignored(path):
+        if ignored(path) or path in excluded:
             continue
         if code == "??":
             untracked.append(path)
         files.append({"status": code, "path": path, "additions": "", "deletions": ""})
 
-    numstat = _git(workspace, "diff", "--numstat")
+    numstat = _git(workspace, "diff", "--numstat", *pathspecs())
     numstat_map: dict[str, tuple[str, str]] = {}
     for line in numstat.stdout.splitlines():
         parts = line.split("\t")
@@ -183,9 +194,11 @@ def collect_changes(workspace: Path, patch_path: Path) -> dict:
         if entry["path"] in numstat_map:
             entry["additions"], entry["deletions"] = numstat_map[entry["path"]]
 
-    diff = _git(workspace, "diff", "--no-color", "--no-ext-diff").stdout
+    diff = _git(workspace, "diff", "--no-color", "--no-ext-diff", *pathspecs()).stdout
     new_file_diffs: list[str] = []
     for rel in untracked:
+        if rel in excluded:
+            continue
         absolute = workspace / rel
         if not absolute.is_file() or absolute.stat().st_size > UNTRACKED_FILE_MAX_BYTES:
             continue
@@ -248,6 +261,9 @@ def execute_run(options: RunOptions, telemetry: Telemetry | None = None, on_read
     """Run the harness end to end. Never raises for agent-level failures."""
     config = load_harness_config()
     workspace = options.workspace
+    # Fail fast on missing credentials *before* any heavy layer (the judge would
+    # otherwise load the ~800MB laya checkpoint for nothing). Dry-run needs none.
+    env_vars = None if options.dry_run else read_env()
     started = time.time()
     run_id = time.strftime("%Y%m%d-%H%M%S") + "-" + _slug(options.issue.title or workspace.name)
     run_dir = options.reports_root / run_id
@@ -334,7 +350,6 @@ def execute_run(options: RunOptions, telemetry: Telemetry | None = None, on_read
         model = build_dry_run_model(options.scenario, prompts["observation_template"], telemetry=telemetry)
         model_name = "dry-run (scripted, no network)"
     else:
-        env_vars = read_env()
         model_cfg = build_model_config(config, env_vars)
         model = HarnessModel(
             telemetry=telemetry,
@@ -437,6 +452,23 @@ def execute_run(options: RunOptions, telemetry: Telemetry | None = None, on_read
         # re-collect so the report and patch reflect the final, scoped diff
         patch = collect_changes(workspace, run_dir / config["telemetry"]["patch_name"])
         telemetry.emit("workspace_changes_after_rollback", files=patch.get("files", []))
+    # Non-deterministic (judge) out-of-scope flags are deliberately not rolled back
+    # — a wrong rollback is worse than a reported oddity — but when a deterministic
+    # in-scope change anchors our reading of the task, they must not ship inside the
+    # submitted patch either. Exclude them from the patch artefact only.
+    excluded_from_patch: list[str] = []
+    if scope_summary.get("anchored"):
+        excluded_from_patch = sorted(
+            entry["path"]
+            for entry in scope_summary.get("files", [])
+            if not entry.get("in_scope") and entry.get("source") not in ("deterministic",)
+        )
+    if excluded_from_patch:
+        patch = collect_changes(
+            workspace, run_dir / config["telemetry"]["patch_name"], exclude_paths=set(excluded_from_patch)
+        )
+        scope_summary["patch_exclusions"] = excluded_from_patch
+        telemetry.emit("patch_exclusions", paths=excluded_from_patch)
 
     duration = round(time.time() - started, 1)
     cost_total = sum(float(e.get("cost") or 0.0) for e in telemetry.events_of("model_call"))

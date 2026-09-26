@@ -73,7 +73,16 @@ class LayaJudge:
         return self._ensure_loaded()
 
     def _ensure_loaded(self) -> bool:
+        # Load at most once per judge instance: reloading the checkpoint per batch
+        # was both slow and misleading in telemetry (one laya_loaded event per call).
+        if self._agent is not None:
+            return True
+        if self._load_attempted:
+            return False
         self._load_attempted = True
+        return self._load()
+
+    def _load(self) -> bool:
         started = time.time()
         try:
             import laya  # noqa: PLC0415 - optional dependency, imported lazily by design

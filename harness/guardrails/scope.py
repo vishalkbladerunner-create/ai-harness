@@ -77,6 +77,7 @@ class ScopeGuard:
             "rolled_back": rolled_back,
             "ignored": ignored,
             "in_scope": len(classified) - len(flagged),
+            "anchored": anchored,
             "mode": "git-rollback" if self.rollback_enabled else "report-only",
         }
         if self.telemetry is not None:

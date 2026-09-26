@@ -122,6 +122,22 @@ def main() -> int:
             [line for line in result.telemetry_path.read_text(encoding="utf-8").splitlines() if '"model_call"' in line]
         ),
     }
+    # Compliance: the runtime credential must never be written to any run artefact
+    # (trajectory included). This is the regression check for that rule.
+    credential = os.environ.get("AI_API_KEY", "")
+    leaked: list[str] = []
+    if credential:
+        for artefact in sorted(result.run_dir.rglob("*")):
+            if not artefact.is_file():
+                continue
+            try:
+                if credential in artefact.read_text(encoding="utf-8", errors="ignore"):
+                    leaked.append(str(artefact.relative_to(result.run_dir)))
+            except OSError:
+                continue
+    checks["no credential material in run artefacts"] = not leaked
+    if leaked:
+        print(f"[e2e] CREDENTIAL LEAK in: {', '.join(leaked)}")
     print("\n[e2e] checks:")
     for name, ok in checks.items():
         print(f"  {'PASS' if ok else 'FAIL'}  {name}")

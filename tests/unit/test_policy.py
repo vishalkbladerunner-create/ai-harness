@@ -88,7 +88,10 @@ def test_allows_clearly_safe_commands_without_judge(tmp_path, policy_config, com
 
 def test_grey_zone_uses_judge_and_refuses_on_high_probability(tmp_path, policy_config):
     policy = make_policy(tmp_path, policy_config, judge=FixedJudge("destructive", 0.95))
-    decision = policy.check("python -c 'import shutil; shutil.rmtree(\"/\")'")
+    # A dynamic command *without* a dangerous payload stays grey and is judged
+    # (dangerous payloads are now refused deterministically; see the
+    # dynamic-payload tests below).
+    decision = policy.check("python -c 'print(len(\"abcd\"))'")
     assert decision["outcome"] == "refuse"
     assert decision["source"] == "laya"
     assert decision["probability"] == pytest.approx(0.95)
@@ -162,3 +165,50 @@ def test_telemetry_records_every_decision(tmp_path, policy_config):
     assert {e["outcome"] for e in events} == {"refuse", "allow"}
     assert all("probability" in e for e in events)
     telemetry.close()
+
+
+# ------------------------------------------------- dynamic payloads (bypass fix)
+
+
+DYNAMIC_DESTRUCTIVE = [
+    "python -c \"import shutil; shutil.rmtree('/tmp/guarded-mini-canary')\"",
+    "python -c \"import os; os.remove('x')\"",
+    "python -c \"import subprocess; subprocess.run(['rm', '-rf', '/'])\"",
+    "python3 -c \"import urllib.request; urllib.request.urlopen('http://x')\"",
+    "bash -c 'rm -rf /tmp/x'",
+]
+
+
+@pytest.mark.parametrize("command", DYNAMIC_DESTRUCTIVE)
+def test_dynamic_payloads_with_dangerous_primitives_are_refused(tmp_path, policy_config, command):
+    decision = make_policy(tmp_path, policy_config).check(command)
+    assert decision["outcome"] == "refuse", command
+    assert decision["rule"] == "dynamic_payload"
+
+
+def test_dynamic_readonly_payload_still_goes_to_the_judge(tmp_path, policy_config):
+    decision = make_policy(tmp_path, policy_config, judge=FixedJudge("safe", 0.95)).check("python -c 'print(1 + 1)'")
+    assert decision["outcome"] == "allow"
+    assert decision["source"] == "laya"
+
+
+def test_source_code_mentioning_dangerous_apis_is_a_safe_read(tmp_path, policy_config):
+    for command in ["grep -n 'shutil.rmtree' buggy.py", "grep -n 'os.remove(' buggy.py", "cat rmtree_notes.md"]:
+        decision = make_policy(tmp_path, policy_config).check(command)
+        assert decision["outcome"] == "allow", command
+
+
+def test_eval_and_exec_used_as_code_are_refused(tmp_path, policy_config):
+    for command in ["python -c \"eval('1')\"", "bash -c 'exec ls'"]:
+        decision = make_policy(tmp_path, policy_config).check(command)
+        assert decision["outcome"] == "refuse", command
+
+
+def test_quoted_eval_word_and_find_exec_are_not_obfuscation(tmp_path, policy_config):
+    for command, expected_rule in [
+        ("grep -n 'eval' buggy.py", "safe_prefix"),
+        ("find . -name '*.py' -exec wc -l {} +", "safe_prefix"),
+    ]:
+        decision = make_policy(tmp_path, policy_config).check(command)
+        assert decision["outcome"] == "allow", command
+        assert decision["rule"] == expected_rule, command

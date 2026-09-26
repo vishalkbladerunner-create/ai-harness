@@ -25,6 +25,8 @@ import litellm
 from minisweagent.exceptions import FormatError
 from minisweagent.models.litellm_model import LitellmModel
 
+from harness.secrets import redact_sensitive_fields
+
 logger = logging.getLogger("harness.model")
 
 #: Substrings that indicate a server refused one of the pinned parameters.
@@ -47,10 +49,6 @@ def _num(value: Any) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
-
-
-class HarnessModel(LitellmModel):
-    """Additive wrapper: telemetry, usage normalisation, one-shot param fallback."""
 
 
 def extract_usage(message: dict) -> dict:
@@ -167,4 +165,14 @@ class HarnessModel(LitellmModel):
         return message
 
     def get_template_vars(self, **kwargs) -> dict:
-        return self.config.model_dump()
+        # Credential-safe: the raw api_key must never reach a prompt or a log.
+        return redact_sensitive_fields(self.config.model_dump())
+
+    def serialize(self) -> dict:
+        """Serialization used by the agent's trajectory (never contains the key).
+
+        Upstream dumps ``self.config`` into ``trajectory.json`` on every step;
+        the api_key lives in ``model_kwargs``, so it would otherwise be persisted
+        to disk. Redact by field name at the source.
+        """
+        return redact_sensitive_fields(super().serialize())

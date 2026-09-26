@@ -18,18 +18,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from harness.secrets import mask_text
-
-
-def _mask_obj(value: Any) -> Any:
-    """Recursively mask every string inside JSON-compatible data."""
-    if isinstance(value, str):
-        return mask_text(value)
-    if isinstance(value, dict):
-        return {k: _mask_obj(v) for k, v in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_mask_obj(v) for v in value]
-    return value
+from harness.secrets import mask_obj
 
 
 class Telemetry:
@@ -56,7 +45,7 @@ class Telemetry:
             "iso": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
             "run_id": self.run_id,
             "kind": kind,
-            **_mask_obj(fields),
+            **mask_obj(fields),
         }
         with self._lock:
             self._events.append(event)

@@ -109,11 +109,46 @@ guardrails:
       reason: "dynamic evaluation or decoding hides what will actually run"
       suggestion: "write the command or script out plainly so it can be reviewed"
       patterns:
-        - '\beval\b'
-        - '\bexec\s'
+        # `eval(...)` / `eval $x` = used as code; the bare word inside a quoted
+        # search term (`grep -n 'eval' file.py`) is not flagged.
+        - '\beval\s*\(|\beval\s+\S'
+        # `exec cmd` but not `find … -exec cmd`.
+        - '(?<!-)\bexec\s'
         - 'base64\s+(-d|--decode)'
         - 'python[0-9.]*\s+-c\s+.*(exec|eval)\('
         - '\bxargs\b.*\b(sh|bash)\b'
+  # Dynamic evaluation (`python -c`, `bash -c`, `eval`, `xargs`, base64 pipes)
+  # cannot be statically confined, so a *dangerous payload* inside one is refused
+  # deterministically instead of being delegated to the judge. Both a marker and a
+  # dangerous primitive must match the same pipeline segment (so `grep -n 'shutil.rmtree' file.py`
+  # stays a safe read).
+  dynamic_payload:
+    reason: >-
+      dynamic evaluation hides what will actually run and this payload can delete or
+      overwrite data, escalate privileges, or reach the network
+    suggestion: >-
+      write the script to a file inside the workspace and run it, or use plain
+      read-only commands
+    markers:
+      - 'python[0-9.]*\s+-c\b'
+      - '(bash|sh|zsh|dash)\s+-c\b'
+      - '\beval\s*\(|\beval\s+\S'
+      - '\bsource\s+\S'
+      - '\bxargs\b'
+      - 'base64\s+(-d|--decode)'
+      - '(perl|ruby|node|php)\s+-e\b'
+    dangerous:
+      - 'rmtree\s*\('
+      - '\bos\.(remove|unlink|rmdir|system|popen|exec[lv]?[pe]?)\s*\('
+      - '\bsubprocess\.\w+\s*\('
+      - '\.unlink\s*\(|\.rmdir\s*\('
+      - '\bshutil\.(move|copy|copy2|copyfile)\s*\('
+      - '\bos\.truncate\s*\(|\.truncate\s*\('
+      - '\b(requests|urllib|httpx|aiohttp|socket)\.'
+      - '\brm\s+-[a-zA-Z]*[rf]'
+      - '\bmkfs\b|\bdd\s+.*of='
+      - '\bchmod\s+-R\s+777\b|\bchown\s'
+      - '\bcurl\b|\bwget\b'
   # Commands whose first segment matches one of these are clearly safe and skip the
   # judge (keeps latency down on the common read-only path).
   safe_prefixes:

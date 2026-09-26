@@ -187,6 +187,12 @@ def render_report(ctx: dict) -> str:
             )
         if scope.get("ignored"):
             scope_body += f"\nIgnored cache/artefact paths: {len(scope['ignored'])}\n"
+        if scope.get("patch_exclusions"):
+            scope_body += (
+                "\nExcluded from the submitted patch (left in the workspace, flagged above): "
+                + ", ".join(f"`{path}`" for path in scope["patch_exclusions"])
+                + "\n"
+            )
         scope_body += f"\nMode: `{scope.get('mode', '')}`\n"
         parts.append(_section("Scope check", scope_body))
 

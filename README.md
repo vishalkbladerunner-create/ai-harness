@@ -96,7 +96,9 @@ Every command passes `GuardedEnvironment.execute → ActionPolicy.check` before 
    workspace (real write-target extraction, not path-looking text), and unsafely backgrounded work.
 2. **Writes statically confined to the workspace are allowed without judging** — that is the agent's
    normal work, and scope is checked separately on the final diff. Dynamic evaluation (`python -c`,
-   `eval`, `base64 -d`, `xargs sh`) never counts as confined.
+   `eval`, `base64 -d`, `xargs sh`) never counts as confined; when such a payload contains a
+   write/delete/network primitive (`rmtree`, `os.remove`, `subprocess`, `requests`, `rm -rf`, …) it is
+   refused deterministically instead of being delegated to the judge.
 3. **The grey zone goes to laya** — a typed `choice` question (`safe` / `destructive` / `out_of_scope`)
    plus a `score` severity, one batched forward pass, with our fitted temperature applied
    (`harness/config/calibration.json`). Bands: act < 0.70 ≤ ask < 0.90 ≤ refuse.
@@ -107,13 +109,16 @@ Every command passes `GuardedEnvironment.execute → ActionPolicy.check` before 
 5. **Scope guard**: end-of-run diff classification (issue terms → tests → project config → laya).
    Deterministic out-of-scope changes are flagged, reported, and **rolled back** in git workspaces;
    judge-only flags are reported but never reverted, and if no change is deterministically in scope
-   we roll nothing back (a wrong rollback is worse than a reported oddity).
+   we roll nothing back (a wrong rollback is worse than a reported oddity). When a deterministic
+   in-scope change anchors the reading of the task, judge-flagged out-of-scope files are additionally
+   **excluded from the submitted patch** while staying in the workspace (data is never lost).
 6. **Injection defence**: repository content is data, never instructions. Deterministic patterns plus
    a laya `noul` probe flag instruction-shaped text; flagged observations carry a `<quarantine>`
    warning, and the compactor pins flagged items so a warning cannot be compacted away.
 7. **Secret hygiene**: credential-like env values are *blanked* in the agent's child environment
    (omission is not enough — upstream merges `os.environ`), every log/report line passes through a
-   masking choke point, and git staging/commits are refused (so nothing can be committed by the agent).
+   masking choke point, the model configuration is redacted by field name before it is serialized
+   into `trajectory.json`, and git staging/commits are refused (so nothing can be committed by the agent).
 8. **Resource guardrails**: hard step / model-call / token / wall-clock budgets with a graceful
    `LimitsExceeded` exit; upstream process-group timeouts; an end-of-run sweep that kills leftover
    workspace-scoped background processes; retry cap 3 with exponential backoff.
@@ -216,7 +221,7 @@ the model was told about the omission via the `<compaction>` marker. With produc
 ## Testing
 
 ```sh
-make test          # 110 unit tests (no model calls) + mock-endpoint E2E on the fixture repo
+make test          # 129 unit tests (no model calls) + mock-endpoint E2E on the fixture repo
 make test-live     # the same E2E against the evaluator endpoint (needs credentials)
 make smoke         # trivial live task: create hello.txt containing done
 ```
@@ -224,8 +229,9 @@ make smoke         # trivial live task: create hello.txt containing done
 The E2E copies `tests/fixture-repo/` (Python off-by-one bug + failing test) into a temp git repo,
 drives the harness with either a scripted deterministic model (`--dry-run`) or a local
 OpenAI-compatible mock server, and asserts: the agent submits, the fixture tests pass afterwards,
-the report exists, the patch captures the fix, and telemetry recorded model calls. Live mode runs
-the same assertion against the real endpoint.
+the report exists, the patch captures the fix, telemetry recorded model calls, and **no runtime
+credential appears in any run artefact** (trajectory included). Live mode runs the
+same assertion against the real endpoint.
 
 ## Limitations (honest)
 

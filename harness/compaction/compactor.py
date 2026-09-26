@@ -204,7 +204,8 @@ class Compactor:
                 Verdict(item.id, item.kind, verdict, p_drop=p_drop, p_essential=p_essential, staleness=staleness,
                         source=result.get("source", "laya"), reason=reason, tokens=item.approx_tokens)
             )
-        return verdicts, "laya", ""
+        # report the *active* judge (laya or the heuristic fallback), not a guess
+        return verdicts, getattr(self.judge, "source", "laya"), ""
 
     # ------------------------------------------------------------------ fitting
     def _build_view(self, items: list[Item], messages: list[dict], dropped: set[str], shortened: dict[str, str]) -> list[dict]:

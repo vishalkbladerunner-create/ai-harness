@@ -21,9 +21,6 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-#: Pipeline separators used to split a compound command into segments.
-_SEGMENT_SPLIT = re.compile(r"&&|\|\||;|\||\n")
-
 #: Write-ish verbs that make an absolute path outside the workspace dangerous.
 _WRITE_VERBS = re.compile(
     r"\b(rm|mv|cp|sed\s+-i|truncate|chmod|chown|mkdir|touch|ln|tee|dd|patch)\b|>>?\s*\S"
@@ -110,8 +107,89 @@ class Rule:
 
 
 def split_segments(command: str) -> list[str]:
-    """Split a compound command into separately classifiable segments."""
-    return [segment.strip() for segment in _SEGMENT_SPLIT.split(command or "") if segment.strip()]
+    """Split a compound command into separately classifiable segments.
+
+    Separators inside single/double quotes are literal text, not pipeline
+    boundaries: a ``python -c "import shutil; shutil.rmtree(x)"`` payload is one
+    segment, so the dynamic-payload check sees the whole snippet while a
+    ``grep -n 'eval' file.py`` stays a read.
+    """
+    segments: list[str] = []
+    buf: list[str] = []
+    quote = ""
+    text = command or ""
+    index = 0
+
+    def flush() -> None:
+        segment = "".join(buf).strip()
+        if segment:
+            segments.append(segment)
+        buf.clear()
+
+    while index < len(text):
+        char = text[index]
+        if quote:
+            buf.append(char)
+            if char == "\\" and quote == '"' and index + 1 < len(text):
+                buf.append(text[index + 1])
+                index += 2
+                continue
+            if char == quote:
+                quote = ""
+            index += 1
+            continue
+        if char in "'\"":
+            quote = char
+            buf.append(char)
+            index += 1
+            continue
+        if char == "|":
+            flush()
+            index += 2 if text.startswith("||", index) else 1
+            continue
+        if char == ";" or char == "\n":
+            flush()
+            index += 1
+            continue
+        if char == "&":
+            if text.startswith("&&", index):
+                flush()
+                index += 2
+                continue
+            buf.append(char)
+            index += 1
+            continue
+        buf.append(char)
+        index += 1
+    flush()
+    return segments
+
+
+def dynamic_payload_decision(segments: list[str], dynamic_cfg: dict | None) -> dict | None:
+    """Refuse dynamic-evaluation segments whose payload can write/delete/network.
+
+    Both a *marker* (python -c, bash -c, eval, xargs, base64 -d, ...) and a
+    *dangerous* primitive must match the same pipeline segment. That keeps
+    ``grep -n 'shutil.rmtree' file.py`` a safe read while refusing the equivalent
+    payload hidden inside ``python -c``.
+    """
+    if not dynamic_cfg:
+        return None
+    markers = dynamic_cfg.get("markers") or []
+    dangerous = dynamic_cfg.get("dangerous") or []
+    for segment in segments:
+        if any(marker.search(segment) for marker in markers) and any(pattern.search(segment) for pattern in dangerous):
+            return {
+                "outcome": "refuse",
+                "rule": "dynamic_payload",
+                "reason": dynamic_cfg.get("reason")
+                or "dynamic evaluation payload can delete, overwrite or reach the network",
+                "suggestion": dynamic_cfg.get("suggestion")
+                or "write the script to a file inside the workspace, or use plain read-only commands",
+                "source": "deterministic",
+                "segment": segment[:200],
+            }
+    return None
 
 
 def classify_deterministic(
@@ -120,24 +198,29 @@ def classify_deterministic(
     safe_prefixes: list[re.Pattern],
     risk_markers: list[re.Pattern],
     workspace: Path | None = None,
+    dynamic_payload: dict | None = None,
 ) -> dict:
     """Return a decision dict using *only* deterministic knowledge.
 
-    outcome is one of: refuse, safe (clear allow), grey (needs the judge).
+    outcome is one of: refuse, ask, safe (clear allow), grey (needs the judge).
     """
     segments = split_segments(command) or [command]
     for segment in segments:
         for rule in rules:
             for pattern in rule.patterns:
                 if pattern.search(segment):
+                    outcome = rule.outcome if rule.outcome in ("allow", "ask", "refuse") else "refuse"
                     return {
-                        "outcome": "refuse",
+                        "outcome": outcome,
                         "rule": rule.id,
                         "reason": rule.reason,
                         "suggestion": rule.suggestion,
                         "source": "deterministic",
                         "segment": segment[:200],
                     }
+    payload = dynamic_payload_decision(segments, dynamic_payload)
+    if payload is not None:
+        return payload
     first = segments[0]
     has_write_marker = any(marker.search(segment) for marker in risk_markers for segment in segments)
     # Edits/writes statically confined to the workspace are the agent's normal work.
@@ -202,14 +285,24 @@ class ActionPolicy:
         ]
         self.safe_prefixes = [re.compile(p, re.IGNORECASE) for p in cfg.get("safe_prefixes", [])]
         self.risk_markers = [re.compile(p, re.IGNORECASE) for p in cfg.get("risk_markers", [])]
+        payload_cfg = cfg.get("dynamic_payload") or {}
+        self.dynamic_payload = {
+            "markers": [re.compile(p, re.IGNORECASE) for p in payload_cfg.get("markers", [])],
+            "dangerous": [re.compile(p, re.IGNORECASE) for p in payload_cfg.get("dangerous", [])],
+            "reason": payload_cfg.get("reason", ""),
+            "suggestion": payload_cfg.get("suggestion", ""),
+        }
 
     # ------------------------------------------------------------------ gate
     def check(self, command: str) -> dict:
         command = command or ""
-        decision = classify_deterministic(command, self.rules, self.safe_prefixes, self.risk_markers, self.workspace)
+        decision = classify_deterministic(
+            command, self.rules, self.safe_prefixes, self.risk_markers, self.workspace, self.dynamic_payload
+        )
         decision.setdefault("segment", command[:300])
 
-        # workspace containment is enforced deterministically for write-ish commands
+        # workspace containment is enforced deterministically for anything that is
+        # not already a refusal (safe classifications are re-verified too).
         if decision["outcome"] != "refuse":
             stray = outside_workspace_paths(command, self.workspace)
             if stray:
@@ -223,6 +316,20 @@ class ActionPolicy:
 
         if decision["outcome"] == "safe":
             return self._finish(decision, probability=0.0, extra={"source": "deterministic"})
+
+        if decision["outcome"] == "ask":
+            # Deterministic match that needs confirmation. Unattended runs resolve
+            # ask to refuse-with-guidance; attended runs surface the ask.
+            probability = 1.0
+            if self.unattended:
+                decision.update(
+                    {
+                        "outcome": "refuse",
+                        "reason": (decision.get("reason") or "requires confirmation")
+                        + " (this run is unattended, so confirmation is not possible)",
+                    }
+                )
+            return self._finish(decision, probability=probability)
 
         if decision["outcome"] == "refuse":
             return self._finish(decision, probability=1.0)

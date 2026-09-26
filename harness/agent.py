@@ -27,6 +27,7 @@ from minisweagent.agents.default import AgentConfig, DefaultAgent
 
 from harness import HARNESS_NAME, UPSTREAM_COMMIT, UPSTREAM_VERSION, __version__
 from harness.budget import BudgetTracker
+from harness.secrets import mask_obj
 
 logger = logging.getLogger("harness.agent")
 
@@ -109,7 +110,7 @@ class HarnessAgent(DefaultAgent):
                 "compaction": bool(getattr(self.compactor, "enabled", False)),
             }
         }
-        return super().serialize(harness_info, *extra_dicts)
+        return mask_obj(super().serialize(harness_info, *extra_dicts))
 
     # ------------------------------------------------------------- utilities
     def last_usage(self) -> dict | None:

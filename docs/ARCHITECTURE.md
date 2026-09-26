@@ -156,7 +156,8 @@ list. Its evidence (the fixture study) is in the README appendix; live is only e
 5. `GuardedEnvironment.execute` — in order:
    a. `harness_*` sentinel? handled in-process (bash never sees it); `harness_submit_patch` calls
       `_check_finished`, which raises upstream's `Submitted` with the patch summary as the submission;
-   b. `ActionPolicy.check(command)`: 12 deterministic rule groups (policy.yaml), workspace-containment
+   b. `ActionPolicy.check(command)`: 7 deterministic rule groups plus a dynamic-payload check
+      (policy.yaml), workspace-containment
       analysis with real write-target extraction, then — grey zone only — one batched laya call with
       calibrated risk; `allow` / `ask`→refuse (unattended) / `refuse` are all logged with rule,
       probability and temperature;
@@ -187,7 +188,7 @@ list. Its evidence (the fixture study) is in the README appendix; live is only e
 
 | check | command | result |
 |---|---|---|
-| unit + mock E2E | `make test` | 110 passed; fixture E2E PASS (submitted / tests pass / report / patch / telemetry) |
+| unit + mock E2E | `make test` | 129 passed; fixture E2E PASS (submitted / tests pass / report / patch / telemetry / no credential in artefacts) |
 | vendored-core purity | `make check-upstream` | `vendored core == upstream v2.4.6 (byte-identical)` |
 | fresh copy, degraded path | `scripts/clean_env_check.sh --skip-laya` | `make setup` + `make test` PASS (heuristic judge, no laya) |
 | fresh copy, full path | `scripts/clean_env_check.sh` | `make setup` (laya install + checkpoint) + `make test` PASS |

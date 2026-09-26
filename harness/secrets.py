@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import os
 import re
+from typing import Any
 
 # Environment variable name fragments whose *values* must never be echoed.
 SENSITIVE_NAME_FRAGMENTS = ("KEY", "TOKEN", "SECRET", "PASSWORD", "CREDENTIAL")
@@ -75,3 +76,44 @@ def contains_credential_like(text: str) -> bool:
         if value in text:
             return True
     return any(pattern.search(text) for pattern in CREDENTIAL_PATTERNS)
+
+
+def is_sensitive_name(name: str) -> bool:
+    """True when a variable/field *name* looks credential-like."""
+    upper = (name or "").upper()
+    return any(fragment in upper for fragment in SENSITIVE_NAME_FRAGMENTS)
+
+
+def mask_obj(value: Any) -> Any:
+    """Recursively mask every string inside JSON-compatible data.
+
+    The same choke point is used for telemetry, reports and the trajectory, so a
+    serialized structure can never carry a credential-shaped string to disk.
+    """
+    if isinstance(value, str):
+        return mask_text(value)
+    if isinstance(value, dict):
+        return {k: mask_obj(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [mask_obj(v) for v in value]
+    return value
+
+
+def redact_sensitive_fields(value: Any) -> Any:
+    """Replace string values whose *field name* is credential-like with [REDACTED].
+
+    Belt to ``mask_text``'s braces: even a value that does not look like a key
+    (e.g. an opaque token) is removed when it is stored under a key-like name
+    such as ``api_key``. Non-string values (counts, flags) are left untouched.
+    """
+    if isinstance(value, dict):
+        out: dict = {}
+        for key, item in value.items():
+            if isinstance(item, str) and item and is_sensitive_name(str(key)):
+                out[key] = REDACTED
+            else:
+                out[key] = redact_sensitive_fields(item)
+        return out
+    if isinstance(value, (list, tuple)):
+        return [redact_sensitive_fields(item) for item in value]
+    return value

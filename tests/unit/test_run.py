@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from harness.config import REPO_ROOT
-from harness.dryrun import default_scenario
+from harness.dryrun import default_scenario, toolcall
 from harness.issue import parse_issue
 from harness.run import RunOptions, UsageError, execute_run, resolve_workspace
 
@@ -84,3 +84,87 @@ def test_dry_run_verification_evidence(tmp_path):
     report = result.report_path.read_text(encoding="utf-8")
     assert "Verification evidence" in report
     assert "1 passed" in report
+
+
+class _FlaggingJudge:
+    """Judge stub that flags every non-deterministic file as out of scope."""
+
+    available = True
+    source = "laya"
+    task_excerpt = ""
+    max_state_chars = 1100
+    calibration: dict = {}
+
+    def status(self) -> dict:
+        return {"checkpoint": "stub", "available": True}
+
+    def judge_batch(self, states, questions):
+        results = []
+        for _ in states:
+            answers = {}
+            for qid, question in questions.items():
+                if question.get("type") == "noul":
+                    answers[qid] = {"type": "noul", "p_true": 0.0, "raw_p_true": 0.0, "label": "false"}
+                elif question.get("type") == "choice":
+                    answers[qid] = {
+                        "type": "choice",
+                        "probabilities": {"safe": 1.0, "keep": 1.0, "shorten": 0.0, "drop": 0.0},
+                        "raw_probabilities": {"safe": 1.0, "keep": 1.0, "shorten": 0.0, "drop": 0.0},
+                    }
+                else:
+                    answers[qid] = {"type": "score", "score": 3.0, "probabilities": {"3": 1.0}}
+            results.append({"answers": answers, "source": "laya"})
+        return results
+
+
+def test_judge_flagged_file_is_left_in_workspace_but_not_in_patch(tmp_path, monkeypatch):
+    ws = make_git_workspace(tmp_path)
+    scenario = [
+        toolcall("printf '# fix\\n' >> app.py", "apply an in-scope change (anchors the scope check)"),
+        toolcall("printf 'junk\\n' > junk.txt", "create an unrelated file"),
+        toolcall("echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT", "submit"),
+    ]
+    monkeypatch.setattr("harness.run.build_judge", lambda *args, **kwargs: _FlaggingJudge())
+    result = execute_run(
+        RunOptions(
+            issue=parse_issue("fix app.py", source="unit"),
+            workspace=ws,
+            reports_root=tmp_path / "reports",
+            dry_run=True,
+            scenario=scenario,
+        )
+    )
+    assert result.status == "submitted"
+    # conservative: judge flags are reported, never rolled back in the workspace
+    assert (ws / "junk.txt").exists()
+    # ...but they must not ship inside the submitted patch
+    patch = result.patch_path.read_text(encoding="utf-8")
+    assert "junk.txt" not in patch
+    assert "app.py" in patch
+    report = result.report_path.read_text(encoding="utf-8")
+    assert "Excluded from the submitted patch" in report
+    events = [json.loads(line) for line in result.telemetry_path.read_text().splitlines() if line.strip()]
+    assert any(e["kind"] == "patch_exclusions" and "junk.txt" in (e.get("paths") or []) for e in events)
+
+
+def test_without_anchor_judge_flags_are_report_only(tmp_path, monkeypatch):
+    ws = make_git_workspace(tmp_path)
+    scenario = [
+        toolcall("printf 'junk\\n' > junk.txt", "create an unrelated file"),
+        toolcall("echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT", "submit"),
+    ]
+    monkeypatch.setattr("harness.run.build_judge", lambda *args, **kwargs: _FlaggingJudge())
+    result = execute_run(
+        RunOptions(
+            issue=parse_issue("fix app.py", source="unit"),
+            workspace=ws,
+            reports_root=tmp_path / "reports",
+            dry_run=True,
+            scenario=scenario,
+        )
+    )
+    # No deterministic in-scope change anchors the scope reading: nothing is
+    # excluded (a wrong exclusion is worse than a reported oddity).
+    assert "junk.txt" in result.patch_path.read_text(encoding="utf-8")
+    events = [json.loads(line) for line in result.telemetry_path.read_text().splitlines() if line.strip()]
+    assert not any(e["kind"] == "patch_exclusions" for e in events)
