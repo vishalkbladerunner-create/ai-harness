@@ -35,13 +35,16 @@ def test_rejects_missing_workspace(tmp_path):
 
 
 def test_cwd_harness_repo_without_a_target_is_refused_with_guidance(monkeypatch):
-    """Running on our own checkout by accident must be a clear error, not a run."""
+    """Running on our own checkout by accident must be friendly guidance, not a run."""
+    from harness.run import GuidanceError
+
     monkeypatch.chdir(REPO_ROOT)
-    with pytest.raises(UsageError) as excinfo:
+    with pytest.raises(GuidanceError) as excinfo:
         resolve_workspace(None, parse_issue("fix something", source="unit"))
     message = str(excinfo.value)
-    assert "no target repository" in message
+    assert isinstance(excinfo.value, UsageError)  # still a usage error downstream
     assert "WORKSPACE=" in message
+    assert "Repo: owner/name" in message
     assert "--force" in message
 
 

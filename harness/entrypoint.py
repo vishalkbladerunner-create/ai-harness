@@ -38,7 +38,7 @@ from harness import HARNESS_NAME, __version__  # noqa: E402
 from harness.banner import print_banner  # noqa: E402
 from harness.config import ConfigError, REPO_ROOT as CONFIG_REPO_ROOT  # noqa: E402
 from harness.issue import load_issue  # noqa: E402
-from harness.run import RunOptions, UsageError, execute_run, resolve_workspace  # noqa: E402
+from harness.run import GuidanceError, RunOptions, UsageError, execute_run, resolve_workspace  # noqa: E402
 
 EXIT_OK = 0
 EXIT_AGENT_FAILED = 1
@@ -363,7 +363,11 @@ def main(argv: list[str] | None = None) -> int:
             quiet=args.quiet,
         )
     except UsageError as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        if isinstance(exc, GuidanceError):
+            # Guidance, not a failure: print the how-to verbatim, no "error:" prefix.
+            print(f"\n{HARNESS_NAME}: {exc}\n", file=sys.stderr)
+        else:
+            print(f"error: {exc}", file=sys.stderr)
         return EXIT_USAGE
 
     if use_tui:

@@ -64,6 +64,16 @@ class UsageError(RuntimeError):
     """Bad invocation (exit code 2). Message is safe to print."""
 
 
+class GuidanceError(UsageError):
+    """Not a failure: the user needs pointing at a target repository.
+
+    Raised instead of a plain error when the intent is clear (run a task) but
+    no target repo was given — the message is friendly how-to-run guidance,
+    rendered as an info notice (not a red error) by the TUI and printed
+    verbatim (no "error:" prefix) on the headless path.
+    """
+
+
 @dataclass
 class RunOptions:
     issue: Issue
@@ -196,16 +206,14 @@ def resolve_workspace(explicit: str | None, issue: Issue, force: bool = False) -
         cloned = _clone_workspace(issue.repo_url)
         if cloned is not None:
             return cloned
-    print(
-        f"[{HARNESS_NAME}] no target repository: the current directory is the harness's own "
-        "checkout and nothing named a target — running the agent on its own source is unsafe.",
-        file=sys.stderr,
-    )
-    raise UsageError(
-        "no target repository found. Point the harness at the repository under test, e.g.\n"
-        "    make run WORKSPACE=/path/to/target-repo\n"
-        "or put a line like 'Workspace: /path' or 'Repo: owner/name' in the issue text\n"
-        "(pass --force only if you really mean to run on the harness checkout)."
+    raise GuidanceError(
+        "I need a task AND a target repository to work on — I'm an autonomous\n"
+        "coding agent, not a chat, and I never run on my own source code.\n"
+        "Here's how to point me at the repo under test:\n"
+        "  1. make run WORKSPACE=/path/to/repo     (restart with the target)\n"
+        "  2. put 'Repo: owner/name' in the task   (a GitHub repo — I clone it)\n"
+        "  3. cd into the target repo first, then run me from there\n"
+        "Then paste the issue / test case and press Enter. (--force overrides.)"
     )
 
 

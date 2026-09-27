@@ -42,6 +42,7 @@ from textual.message import Message
 from textual.widgets import Button, Footer, Header, RichLog, Static, TextArea
 
 from harness import HARNESS_NAME
+from harness.run import GuidanceError
 from harness.theme import (
     BRAND_BORDER,
     BRAND_BRIGHT,
@@ -292,7 +293,7 @@ class HarnessTUI(App):
     #issue-box {{ width: 84; max-width: 90%; height: auto; border: solid {BRAND_BRIGHT}; padding: 1 2; }}
     #issue-brand {{ content-align: center middle; }}
     #issue-prompt {{ margin-top: 1; color: {BRAND_TEXT}; }}
-    #issue-error {{ height: auto; max-height: 6; color: $error; margin-top: 1; }}
+    #issue-error {{ height: auto; max-height: 10; color: $error; margin-top: 1; }}
     #issue-input {{ height: 6; border: solid {BRAND_BORDER}; margin-top: 1; }}
     #issue-hint {{ color: $text-muted; margin-top: 1; }}
     .hidden {{ display: none; }}
@@ -527,13 +528,31 @@ class HarnessTUI(App):
         try:
             argv = self._collect_issue(text)
         except Exception as exc:  # noqa: BLE001 - show the usage error, keep the UI alive
-            self._post(self._collect_failed, str(exc))
+            self._post(self._collect_failed, exc)
             return
         self._post(self._start_child, argv)
 
-    def _collect_failed(self, message: str) -> None:
-        self._issue_note(f"error: {message}")
+    def _collect_failed(self, exc: Exception) -> None:
+        if isinstance(exc, GuidanceError):
+            self._issue_guidance(str(exc))
+        else:
+            self._issue_note(f"error: {exc}")
         self.query_one("#issue-input", IssueTextArea).disabled = False
+
+    def _issue_guidance(self, text: str) -> None:
+        """A friendly how-to notice in brand colours — never the red error style."""
+        lines = text.splitlines()
+        body = Text()
+        for index, line in enumerate(lines):
+            if index:
+                body.append("\n")
+            if index == 0:
+                body.append(line, style=f"bold {BRAND_SKY}")
+            elif line.startswith("Then "):
+                body.append(line, style="dim")
+            else:
+                body.append(line, style=BRAND_TEXT)
+        self.query_one("#issue-error", Static).update(body)
 
     def _issue_note(self, text: str) -> None:
         # from_markup: collect errors may carry light styling (bold/dim); plain

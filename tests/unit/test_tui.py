@@ -437,3 +437,35 @@ def test_slash_command_palette_runs_commands_after_run_start(tmp_path):
             break
         time.sleep(0.1)
     assert app._child.poll() is not None
+
+
+def test_tui_collect_mode_renders_guidance_as_a_notice_not_an_error(tmp_path):
+    from harness.run import GuidanceError
+    from harness.tui import IssueTextArea
+
+    def collect(text: str) -> list[str]:
+        raise GuidanceError(
+            "I need a task AND a target repository to work on.\n"
+            "  1. make run WORKSPACE=/path/to/repo\n"
+            "Then paste the issue and press Enter."
+        )
+
+    app = HarnessTUI(reports_root=tmp_path, cwd=tmp_path, collect_issue=collect)
+
+    async def smoke() -> None:
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            app.query_one("#issue-input", IssueTextArea).text = "hi"
+            await pilot.press("enter")
+            for _ in range(30):
+                await pilot.pause(0.1)
+                if "WORKSPACE=" in str(app.query_one("#issue-error").render()):
+                    break
+            rendered = str(app.query_one("#issue-error").render())
+            assert "WORKSPACE=" in rendered
+            assert not rendered.startswith("error:"), "guidance must not read as an error"
+            assert not app.query_one("#issue-input", IssueTextArea).disabled
+            assert app._child is None
+            app.action_quit()
+
+    asyncio.run(smoke())
