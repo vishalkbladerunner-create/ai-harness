@@ -121,7 +121,8 @@ def _clone_workspace(repo_url: str) -> Path | None:
 
     Used only when no workspace was otherwise resolved (no WORKSPACE, no
     ``Workspace:`` hint, no existing checkout in the issue). Failure is not
-    fatal: the caller falls back to the current directory with a warning.
+    fatal: the caller falls back to refusing with instructions (the only
+    remaining candidate would be the harness's own checkout).
     """
     slug = re.sub(r"[^A-Za-z0-9._-]+", "-", re.sub(r"^https?://github\.com/", "", repo_url).rstrip("/"))
     slug = slug.strip("-") or "target"
@@ -159,7 +160,9 @@ def resolve_workspace(explicit: str | None, issue: Issue, force: bool = False) -
       3. an existing git checkout whose absolute path is named in the issue
       4. the current directory (the evaluator may run the harness inside the target)
       5. the GitHub repository named by the issue (cloned into ``.cache/workspaces``)
-      6. the current directory with a warning — ``make run`` must never refuse to launch.
+      6. refuse with instructions when the only candidate is the harness's own
+         checkout — running the agent on its own source is never the intent
+         (``--force`` overrides).
     """
     if explicit:
         candidate = Path(explicit).expanduser().resolve()
@@ -194,12 +197,16 @@ def resolve_workspace(explicit: str | None, issue: Issue, force: bool = False) -
         if cloned is not None:
             return cloned
     print(
-        f"[{HARNESS_NAME}] warning: no target workspace was given and the current directory is the "
-        "harness checkout. Running on the current directory; pass WORKSPACE=<target-repo> (or put "
-        "'Workspace: /path' in the issue) to point the harness at the repository under test.",
+        f"[{HARNESS_NAME}] no target repository: the current directory is the harness's own "
+        "checkout and nothing named a target — running the agent on its own source is unsafe.",
         file=sys.stderr,
     )
-    return cwd
+    raise UsageError(
+        "no target repository found. Point the harness at the repository under test, e.g.\n"
+        "    make run WORKSPACE=/path/to/target-repo\n"
+        "or put a line like 'Workspace: /path' or 'Repo: owner/name' in the issue text\n"
+        "(pass --force only if you really mean to run on the harness checkout)."
+    )
 
 
 # --------------------------------------------------------------------------

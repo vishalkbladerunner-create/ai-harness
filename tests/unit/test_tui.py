@@ -392,3 +392,50 @@ def test_collect_with_key_builds_the_child_command(monkeypatch, tmp_path):
     monkeypatch.setenv("AI_API_KEY", "sk-test-key-1234567890")
     argv = _make_collect(_args("--workspace", str(tmp_path)), str(tmp_path))("fix the failing test")
     assert argv[0] == sys.executable and "--workspace" in argv
+
+
+def test_slash_command_palette_runs_commands_after_run_start(tmp_path):
+    """'/' opens the palette even after collect mode (focus must not be stranded)."""
+    import time
+
+    from harness.tui import IssueTextArea
+
+    def collect(text: str) -> list[str]:
+        return [sys.executable, "-c", "import time; time.sleep(60)"]
+
+    app = HarnessTUI(reports_root=tmp_path, cwd=tmp_path, collect_issue=collect)
+
+    async def smoke() -> None:
+        from textual.command import CommandPalette
+
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            app.query_one("#issue-input", IssueTextArea).text = "Fix the thing"
+            await pilot.press("enter")
+            for _ in range(30):
+                await pilot.pause(0.2)
+                if app._child is not None:
+                    break
+            assert app._child is not None
+            # the graph is visible; "/" must open the palette (not type into the hidden input)
+            assert app.query_one("#graph-panel").display is not False
+            await pilot.press("/")
+            for _ in range(20):
+                await pilot.pause(0.2)
+                if isinstance(app.screen, CommandPalette):
+                    break
+            assert isinstance(app.screen, CommandPalette), "the slash palette must open"
+            await pilot.pause(0.6)  # let the search worker deliver hits
+            await pilot.press("enter")  # first command: graph
+            await pilot.pause(0.3)
+            assert app.query_one("#graph-panel").display is False
+            await pilot.press("q")
+            await pilot.pause(0.5)
+
+    asyncio.run(smoke())
+    assert app.final_code == 130
+    for _ in range(30):
+        if app._child.poll() is not None:
+            break
+        time.sleep(0.1)
+    assert app._child.poll() is not None

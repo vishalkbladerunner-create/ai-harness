@@ -62,7 +62,7 @@ make run WORKSPACE=/path/to/target-repo < issue.md
 make run BUDGET=20 ARGS="--max-steps 60" < issue.md   # evaluators can impose caps
 make run TUI=1 ARGS="--dry-run"                  # TUI demo, no credentials, no cost
 make replay                                      # reopen the last run in the TUI
-make test                                        # 185 unit tests + mock-E2E (no API calls)
+make test                                        # 190 unit tests + mock-E2E (no API calls)
 make test-live                                   # one live E2E pass (spends your AI_API_KEY)
 make smoke                                       # one trivial live task
 make clean                                       # remove venv, caches, generated reports
@@ -73,7 +73,9 @@ make clean                                       # remove venv, caches, generate
 **How the target repository is found** (first hit wins): `WORKSPACE=`/`--workspace` → a
 `Workspace: /path` line in the issue → a git checkout whose absolute path appears in the issue →
 the current directory → the GitHub repo named in the issue (cloned to `.cache/workspaces/`) →
-the current directory with a warning. `make run` never refuses to launch.
+the current directory with a warning. If the only candidate is the harness's **own checkout**, the
+run refuses with clear instructions instead (running the agent on its own source is unsafe;
+`--force` overrides).
 
 ---
 
@@ -110,7 +112,9 @@ On an interactive terminal, `make run` opens the **collect screen** — paste th
 
 Design rule: the TUI is a **viewer**. The evaluation path is headless; the TUI launches the *same*
 entrypoint as a child process and tails its telemetry, so the visual path and the evaluation path
-can never drift apart. Keys: `g` graph · `f` follow · `q` / `Ctrl-Q` quit. If TUI dependencies are
+can never drift apart. Commands work like other agent harnesses: type **`/`** and the command
+palette opens (`graph`, `follow`, `quit`) — Enter runs the highlighted command; `g` / `f` / `q` /
+`Ctrl-Q` remain as shortcuts. If TUI dependencies are
 missing it explains itself and the headless path is unaffected.
 
 ---
@@ -256,6 +260,18 @@ probabilities, scope check, injection scans, compaction audit, degradation notes
 
 ## Live evidence (2026-09-27, DeepSeek `deepseek-flash`)
 
+**SWE-bench Verified: 2/2 solved.** Real benchmark instances, cloned at their base commits, the
+problem statement fed verbatim through the standard `make run` path, scored with the benchmark's
+own test patches (both FAIL_TO_PASS tests confirmed failing on the base commit first):
+
+| instance | result | patch |
+|---|---|---|
+| `sympy__sympy-22914` (PythonCodePrinter Min/Max) | ✅ `test_PythonCodePrinter` passes (20/20 file tests) | character-identical to the gold patch |
+| `sympy__sympy-23950` (`Contains.as_set`) | ✅ `test_as_set` passes (6/6 file tests) | same file + equivalent change as gold |
+
+Benchmark cost: **$0.056** total (40 + 25 model calls; 96–97% of the ~1.3M input tokens were
+cache hits, verified against the provider payload).
+
 Produced with a real funded key, total cost ≈ **$0.018**:
 
 | run | result |
@@ -299,7 +315,7 @@ laya), vendored core byte-identical to upstream v2.4.6 (`make check-upstream`). 
 │   ├── laya/                #   local judge adapter + heuristics fallback
 │   └── config/              # configuration: YAML, prompts, calibration (no secrets)
 ├── vendor/mini-swe-agent/   # vendored upstream core, byte-identical to v2.4.6
-├── tests/                   # 185 unit tests + fixture repo + mock model server
+├── tests/                   # 190 unit tests + fixture repo + mock model server
 ├── scripts/                 # setup, e2e (mock+live), smoke, doctor, calibration
 ├── docs/ARCHITECTURE.md     # line-by-line walkthrough of the loop and every hook
 ├── constraints.txt          # dependency pins (tested)

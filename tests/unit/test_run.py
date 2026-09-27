@@ -34,11 +34,20 @@ def test_rejects_missing_workspace(tmp_path):
         resolve_workspace(str(tmp_path / "nope"), parse_issue("fix"))
 
 
-def test_default_cwd_harness_repo_warns_but_returns(monkeypatch, capsys):
+def test_cwd_harness_repo_without_a_target_is_refused_with_guidance(monkeypatch):
+    """Running on our own checkout by accident must be a clear error, not a run."""
     monkeypatch.chdir(REPO_ROOT)
-    resolved = resolve_workspace(None, parse_issue("fix something", source="unit"))
-    assert resolved == REPO_ROOT
-    assert "warning" in capsys.readouterr().err.lower()
+    with pytest.raises(UsageError) as excinfo:
+        resolve_workspace(None, parse_issue("fix something", source="unit"))
+    message = str(excinfo.value)
+    assert "no target repository" in message
+    assert "WORKSPACE=" in message
+    assert "--force" in message
+
+
+def test_cwd_harness_repo_with_force_still_resolves(monkeypatch):
+    monkeypatch.chdir(REPO_ROOT)
+    assert resolve_workspace(None, parse_issue("fix it"), force=True) == REPO_ROOT
 
 
 def test_absolute_git_dir_named_in_issue_is_used(tmp_path, monkeypatch):

@@ -29,12 +29,14 @@ import subprocess
 import sys
 import time
 from collections.abc import Callable
+from functools import partial
 from pathlib import Path
 
 from rich.text import Text
 from textual import on, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
+from textual.command import DiscoveryHit, Hit, Hits, Provider
 from textual.containers import Horizontal, Vertical
 from textual.message import Message
 from textual.widgets import Button, Footer, Header, RichLog, Static, TextArea
@@ -220,6 +222,46 @@ class GraphPanel(Static):
 
 
 # ---------------------------------------------------------------------------
+# slash commands — the palette other agent harnesses (Kimi Code, Claude Code)
+# converge on: type "/" and the commands appear, Enter runs one.
+# ---------------------------------------------------------------------------
+class HarnessCommands(Provider):
+    """The TUI's slash commands, searched by the command palette."""
+
+    COMMANDS: tuple[tuple[str, str], ...] = (
+        ("graph", "Toggle the project graph panel"),
+        ("follow", "Toggle auto-follow of the agent stream"),
+        ("quit", "Quit the TUI (stops the run)"),
+    )
+
+    async def discover(self) -> Hits:
+        """All commands, shown the moment "/" opens the palette (no query yet)."""
+        for name, help_text in self.COMMANDS:
+            yield DiscoveryHit(name, partial(self._run, name), help=help_text)
+
+    async def search(self, query: str) -> Hits:
+        matcher = self.matcher(query)
+        for name, help_text in self.COMMANDS:
+            score = matcher.match(name) if query else 1.0
+            if score > 0:
+                yield Hit(
+                    score,
+                    matcher.highlight(name),
+                    partial(self._run, name),
+                    help=help_text,
+                )
+
+    def _run(self, name: str) -> None:
+        app = self.app
+        if name == "graph":
+            app.action_toggle_graph()
+        elif name == "follow":
+            app.action_toggle_follow()
+        elif name == "quit":
+            app.action_quit()
+
+
+# ---------------------------------------------------------------------------
 # app
 # ---------------------------------------------------------------------------
 class HarnessTUI(App):
@@ -242,19 +284,24 @@ class HarnessTUI(App):
     #issue-box {{ width: 84; max-width: 90%; height: auto; border: solid {BRAND_BRIGHT}; padding: 1 2; }}
     #issue-brand {{ content-align: center middle; }}
     #issue-prompt {{ margin-top: 1; }}
-    #issue-error {{ height: auto; max-height: 5; color: $error; margin-top: 1; }}
+    #issue-error {{ height: auto; max-height: 6; color: $error; margin-top: 1; }}
     #issue-input {{ height: 6; border: solid {BRAND_DARK}; margin-top: 1; }}
     #issue-hint {{ color: $text-muted; margin-top: 1; }}
     .hidden {{ display: none; }}
     """
     BINDINGS = [
-        Binding("g", "toggle_graph", "graph", show=True),
-        Binding("f", "toggle_follow", "follow", show=True),
-        Binding("q", "quit", "quit", show=True),
+        # Slash commands are the primary interface (like other agent harnesses):
+        # "/" opens the command palette, Enter runs the highlighted command.
+        Binding("/", "command_palette", "commands", show=True),
+        # The single-letter shortcuts stay as secondary aliases.
+        Binding("g", "toggle_graph", "graph", show=False),
+        Binding("f", "toggle_follow", "follow", show=False),
+        Binding("q", "quit", "quit", show=False),
         # Priority so it also works while typing in the issue input (a plain
         # "q" is legitimately text there).
         Binding("ctrl+q", "quit", "quit", show=False, priority=True),
     ]
+    COMMANDS = {HarnessCommands}
 
     def __init__(
         self,
@@ -489,6 +536,9 @@ class HarnessTUI(App):
         self.query_one("#titlebar").remove_class("hidden")
         self.query_one("#body").remove_class("hidden")
         self.query_one("#status").remove_class("hidden")
+        # Focus was on the issue input (now hidden): drop it, or app-level keys
+        # (/, g, q) would keep landing in the invisible text box.
+        self.set_focus(None)
         self._state["status"] = "starting"
         self._begin_viewing()
 
