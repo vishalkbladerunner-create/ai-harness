@@ -189,7 +189,7 @@ list. Its evidence (the fixture study) is in the README appendix; live is only e
 
 | check | command | result |
 |---|---|---|
-| unit + mock E2E | `make test` | 185 passed; fixture E2E PASS (submitted / tests pass / report / patch / telemetry / no credential in artefacts) |
+| unit + mock E2E | `make test` | 199 passed; fixture E2E PASS (submitted / tests pass / report / patch / telemetry / no credential in artefacts) |
 | vendored-core purity | `make check-upstream` | `vendored core == upstream v2.4.6 (byte-identical)` |
 | fresh copy, degraded path | `scripts/clean_env_check.sh --skip-laya` | `make setup` + `make test` PASS (heuristic judge, no laya) |
 | fresh copy, full path | `scripts/clean_env_check.sh` | `make setup` (laya install + checkpoint) + `make test` PASS |

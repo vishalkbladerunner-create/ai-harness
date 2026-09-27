@@ -552,7 +552,7 @@ class HarnessTUI(App):
             self._issue_guidance(reply)
             return
         self.query_one("#issue-input", IssueTextArea).disabled = True
-        self._issue_note("preparing the run… (resolving the workspace)")
+        self._issue_note("preparing the run… (fetching the issue / resolving the workspace)")
         self._collect_and_run(text)
 
     @work(thread=True, exclusive=True, group="harness-collect")

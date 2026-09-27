@@ -17,7 +17,7 @@
 
 ```text
 .venv/bin/python -m pytest tests/unit -q
-  -> 193 passed (final state after all phases + the TUI collect mode, provider
+  -> 199 passed (final state after all phases + the TUI collect mode, provider
      refresh, budget safety-net redesign, and token/cache accounting; 35 at the end of Phase 0)
 
 .venv/bin/python scripts/e2e_fixture.py --mode mock

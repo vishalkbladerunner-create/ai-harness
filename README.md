@@ -62,15 +62,19 @@ make run WORKSPACE=/path/to/target-repo < issue.md
 make run BUDGET=20 ARGS="--max-steps 60" < issue.md   # evaluators can impose caps
 make run TUI=1 ARGS="--dry-run"                  # TUI demo, no credentials, no cost
 make replay                                      # reopen the last run in the TUI
-make test                                        # 190 unit tests + mock-E2E (no API calls)
+make test                                        # 199 unit tests + mock-E2E (no API calls)
 make test-live                                   # one live E2E pass (spends your AI_API_KEY)
 make smoke                                       # one trivial live task
+make bench INSTANCE="sympy__sympy-22914 …"       # SWE-bench Verified: run + score, one command
 make clean                                       # remove venv, caches, generated reports
 ```
 
 </details>
 
-**How the target repository is found** (first hit wins): `WORKSPACE=`/`--workspace` → a
+**Pasting a GitHub issue/PR link works too**: the harness fetches the title and body (GitHub API,
+with an HTML fallback when rate-limited), then clones the repository automatically. A bare link
+that cannot be fetched produces friendly guidance, never a doomed run. **How the target repository
+is found** (first hit wins): `WORKSPACE=`/`--workspace` → a
 `Workspace: /path` line in the issue → a git checkout whose absolute path appears in the issue →
 the current directory → the GitHub repo named in the issue (cloned to `.cache/workspaces/`) →
 the current directory with a warning. If the only candidate is the harness's **own checkout**, the
@@ -260,17 +264,25 @@ probabilities, scope check, injection scans, compaction audit, degradation notes
 
 ## Live evidence (2026-09-27, DeepSeek `deepseek-flash`)
 
-**SWE-bench Verified: 2/2 solved.** Real benchmark instances, cloned at their base commits, the
-problem statement fed verbatim through the standard `make run` path, scored with the benchmark's
-own test patches (both FAIL_TO_PASS tests confirmed failing on the base commit first):
+**SWE-bench Verified: 5/8 solved (62.5%)** with `deepseek-flash`, all through
+`make bench INSTANCE=…` — real instances cloned at their exact base commits, the problem statement
+fed verbatim, scored with the benchmark's own test patches (every FAIL_TO_PASS test confirmed
+failing on the base commit first). No run ever hung or needed manual intervention.
 
-| instance | result | patch |
+| instance | result | notes |
 |---|---|---|
-| `sympy__sympy-22914` (PythonCodePrinter Min/Max) | ✅ `test_PythonCodePrinter` passes (20/20 file tests) | character-identical to the gold patch |
-| `sympy__sympy-23950` (`Contains.as_set`) | ✅ `test_as_set` passes (6/6 file tests) | same file + equivalent change as gold |
+| `sympy__sympy-22914` | ✅ SOLVED | patch character-identical to gold |
+| `sympy__sympy-23950` | ✅ SOLVED | same file + equivalent change as gold |
+| `sympy__sympy-23534` | ✅ SOLVED | `test_symbols` passes |
+| `sympy__sympy-23262` | ✅ SOLVED | `test_issue_14941` passes |
+| `sympy__sympy-24213` | ✅ SOLVED | files exactly match gold |
+| `sympy__sympy-23824` | ❌ wrong fix | submitted; FAIL_TO_PASS still fails |
+| `sympy__sympy-22714` | ❌ wrong fix | submitted; FAIL_TO_PASS still fails |
+| `sympy__sympy-24562` | ❌ format error | the model emitted malformed tool calls 3× in a row → upstream's graceful exit (not a hang); the cheapest run at $0.006 |
 
-Benchmark cost: **$0.056** total (40 + 25 model calls; 96–97% of the ~1.3M input tokens were
-cache hits, verified against the provider payload).
+Total measured cost for all 8 instances: **$0.161** (DeepSeek peak-price estimate; 96–97% of
+input tokens were cache hits). The honest failure modes are part of the evidence: two
+wrong-but-confident fixes, one model-side format failure that the harness exited gracefully.
 
 Produced with a real funded key, total cost ≈ **$0.018**:
 

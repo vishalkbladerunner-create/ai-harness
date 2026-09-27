@@ -1,6 +1,6 @@
 # Tested dependency versions for guarded-mini.
 #
-# These are the exact versions used for the 193-test + mock-E2E verification on
+# These are the exact versions used for the 199-test + mock-E2E verification on
 # 2026-09-27 (macOS arm64, Python 3.12). `make setup` applies this file as pip
 # constraints so a fresh clone resolves the same environment; if any pin cannot
 # be satisfied for the evaluator's platform, setup retries unpinned and prints a

@@ -25,6 +25,10 @@ TEST_RE = re.compile(r"\b(test_[A-Za-z0-9_]+|[A-Za-z0-9_]+_test)\b")
 NUM_RE = re.compile(r"\b(?:line|ln)\s*(\d{1,6})\b", re.IGNORECASE)
 #: GitHub repository references (URL or an explicit ``Repo: owner/name`` line).
 GITHUB_URL_RE = re.compile(r"https?://github\.com/([\w.-]+)/([\w.-]+?)(?:\.git)?(?=[/\s#?]|$)", re.IGNORECASE)
+#: A GitHub issue or pull-request link (``…/issues/123`` or ``…/pull/123``).
+ISSUE_URL_RE = re.compile(
+    r"https?://github\.com/([\w.-]+)/([\w.-]+?)/(?:issues|pull)/(\d+)(?=[/\s#?]|$)", re.IGNORECASE
+)
 REPO_LINE_RE = re.compile(
     r"(?im)^\s*(?:repo(?:sitory)?|project)\s*:\s*(?:https?://github\.com/)?([\w.-]+/[\w.-]+?)(?:\.git)?\s*$"
 )
@@ -165,6 +169,72 @@ def _repo_reference(text: str) -> str:
     if url:
         return f"https://github.com/{url.group(1)}/{url.group(2)}"
     return ""
+
+
+def issue_link(text: str) -> tuple[str, str] | None:
+    """First GitHub issue/PR link in the text as (api_url, canonical_url), or None."""
+    match = ISSUE_URL_RE.search(text or "")
+    if not match:
+        return None
+    owner, repo, number = match.group(1), match.group(2), match.group(3)
+    return f"https://api.github.com/repos/{owner}/{repo}/issues/{number}", match.group(0)
+
+
+def fetch_issue_text(text: str, *, timeout: int = 15) -> str | None:
+    """Fetch title+body for a pasted GitHub issue/PR link.
+
+    Primary source is GitHub's public API (60 unauthenticated requests/hour per
+    IP); when that is exhausted the fallback is the public HTML page (title +
+    description snippet — not rate-limited the same way). Returns the task text
+    (title + body + the original link, which keeps the repo reference for
+    workspace cloning), or None on any failure — callers decide whether to fall
+    back or guide the user. Parsing itself stays offline; this is the single,
+    explicit network step for pasted links.
+    """
+    import json
+    import urllib.request
+
+    reference = issue_link(text)
+    if reference is None:
+        return None
+    api_url, canonical = reference
+
+    def _open(url: str, accept: str) -> bytes | None:
+        request = urllib.request.Request(url, headers={"Accept": accept, "User-Agent": "guarded-mini-harness"})
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                return response.read()
+        except Exception:
+            return None
+
+    raw = _open(api_url, "application/vnd.github+json")
+    if raw is not None:
+        try:
+            data = json.loads(raw.decode("utf-8", errors="replace"))
+        except json.JSONDecodeError:
+            data = None
+        if isinstance(data, dict):
+            title = str(data.get("title") or "").strip()
+            body = str(data.get("body") or "").strip()
+            if title or body:
+                return f"# {title}\n\n{body}\n\n---\nOriginal link: {text.strip()}"
+
+    # Fallback: the public HTML page (not subject to the API rate limit).
+    import html as html_module
+
+    page = _open(canonical, "text/html,application/xhtml+xml")
+    if page is None:
+        return None
+    page_text = page.decode("utf-8", errors="replace")
+    title_match = re.search(r"<title>(.*?)</title>", page_text, re.DOTALL)
+    desc_match = re.search(r'<meta\s+name="description"\s+content="(.*?)"', page_text, re.DOTALL)
+    title = html_module.unescape(title_match.group(1)).strip() if title_match else ""
+    title = re.sub(r"\s*·\s*(Issue|Pull Request) #\d+.*$", "", title).strip()
+    body = html_module.unescape(desc_match.group(1)).strip() if desc_match else ""
+    if not title and not body:
+        return None
+    note = "(from the page snippet — paste the full issue text for best results)"
+    return f"# {title}\n\n{body}\n\n{note}\n\n---\nOriginal link: {text.strip()}"
 
 
 def _absolute_paths(text: str) -> list[str]:

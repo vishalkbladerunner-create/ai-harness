@@ -64,6 +64,8 @@ help:
 	@echo "  make test-live force the live eval against tests/fixture-repo (needs creds)"
 	@echo "  make smoke     one trivial live task: create hello.txt containing done"
 	@echo "  make doctor    probe DeepSeek + Qwen with your AI_API_KEY (auth + model IDs)"
+	@echo "  make bench     run + score SWE-bench Verified instances end to end"
+	@echo "                 (INSTANCE=\"sympy__sympy-22914 …\"; needs AI_API_KEY)"
 	@echo "  make clean     remove .venv, caches, generated reports"
 	@echo ""
 	@echo "  make run ISSUE=path/to/issue.md WORKSPACE=/path/to/target-repo"
@@ -180,6 +182,11 @@ smoke: venv-guard
 doctor: venv-guard
 	@$(PY) scripts/check_providers.py
 
+# Real benchmark: run + score SWE-bench Verified instances end to end.
+#   make bench INSTANCE="sympy__sympy-22914 sympy__sympy-23950"
+bench: venv-guard
+	@$(PY) scripts/swebench.py $(INSTANCE)
+
 # Optional: prove the vendored core is byte-identical to the upstream tag.
 check-upstream:
 	@tmp=$$(mktemp -d) && git clone --quiet https://github.com/SWE-agent/mini-swe-agent "$$tmp/up" && \
@@ -203,4 +210,4 @@ clean:
 	find reports -mindepth 1 -maxdepth 1 ! -name '.gitkeep' ! -name 'EXAMPLE' -print -exec rm -rf {} + 2>/dev/null || true
 	@echo "clean complete (reports/EXAMPLE is kept as the reference artefact)."
 
-.PHONY: help setup run replay test test-unit test-e2e test-live smoke doctor clean check-upstream check-clean-env
+.PHONY: help setup run replay test test-unit test-e2e test-live smoke doctor bench clean check-upstream check-clean-env

@@ -37,7 +37,7 @@ if str(REPO_ROOT) not in sys.path:
 from harness import HARNESS_NAME, __version__  # noqa: E402
 from harness.banner import print_banner  # noqa: E402
 from harness.config import ConfigError, REPO_ROOT as CONFIG_REPO_ROOT  # noqa: E402
-from harness.issue import load_issue  # noqa: E402
+from harness.issue import fetch_issue_text, issue_link, load_issue, parse_issue  # noqa: E402
 from harness.run import GuidanceError, RunOptions, UsageError, execute_run, resolve_workspace  # noqa: E402
 
 EXIT_OK = 0
@@ -219,6 +219,30 @@ CONNECT_API_MESSAGE = (
 )
 
 
+def _resolve_issue_text(issue) -> "object":
+    """Expand a pasted GitHub issue/PR link into the actual task text.
+
+    The parser is offline by design, so this is the one explicit fetch — it
+    runs in the entrypoint (never inside the agent, whose policy blocks
+    network). A bare link that cannot be fetched becomes guidance, not a
+    doomed run with a URL for a task.
+    """
+    if issue_link(issue.text) is None:
+        return issue
+    fetched = fetch_issue_text(issue.text)
+    if fetched is not None:
+        print(f"[{HARNESS_NAME}] fetched the issue text from GitHub", file=sys.stderr)
+        return parse_issue(fetched, source=issue.source)
+    stripped = issue.text.strip()
+    if len(stripped) < 200 and "\n" not in stripped:
+        raise GuidanceError(
+            "that looks like a bare GitHub link and I couldn't fetch it (offline, rate-limited,\n"
+            "or a private repo). Paste the issue text itself instead — keep the link in it or add\n"
+            "'Repo: owner/name', and I'll clone the repository and take it from there."
+        )
+    return issue
+
+
 def _make_collect(args, workspace_arg: str | None):
     """Build the TUI collect-mode callback (importable for tests).
 
@@ -229,7 +253,7 @@ def _make_collect(args, workspace_arg: str | None):
     """
 
     def collect(issue_text: str) -> list[str]:
-        issue = load_issue(None, stdin_text=issue_text)
+        issue = _resolve_issue_text(load_issue(None, stdin_text=issue_text))
         if not args.dry_run and not os.environ.get("AI_API_KEY"):
             raise UsageError(CONNECT_API_MESSAGE)
         options = RunOptions(
@@ -345,9 +369,13 @@ def main(argv: list[str] | None = None) -> int:
     # Task: explicit file wins, then positional path, then stdin.
     try:
         issue = load_issue(issue_arg, stdin_text=None if issue_arg else _read_stdin())
+        issue = _resolve_issue_text(issue)
     except (FileNotFoundError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         print("usage: make run < issue.md   |   make run ISSUE=issue.md", file=sys.stderr)
+        return EXIT_USAGE
+    except UsageError as exc:  # guidance from _resolve_issue_text (bare unfetchable link)
+        print(f"\n{HARNESS_NAME}: {exc}\n", file=sys.stderr)
         return EXIT_USAGE
 
     try:
