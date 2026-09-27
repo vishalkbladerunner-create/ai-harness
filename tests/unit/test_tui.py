@@ -455,7 +455,7 @@ def test_tui_collect_mode_renders_guidance_as_a_notice_not_an_error(tmp_path):
     async def smoke() -> None:
         async with app.run_test(size=(120, 40)) as pilot:
             await pilot.pause()
-            app.query_one("#issue-input", IssueTextArea).text = "hi"
+            app.query_one("#issue-input", IssueTextArea).text = "fix the failing test"
             await pilot.press("enter")
             for _ in range(30):
                 await pilot.pause(0.1)
@@ -466,6 +466,50 @@ def test_tui_collect_mode_renders_guidance_as_a_notice_not_an_error(tmp_path):
             assert not rendered.startswith("error:"), "guidance must not read as an error"
             assert not app.query_one("#issue-input", IssueTextArea).disabled
             assert app._child is None
+            app.action_quit()
+
+    asyncio.run(smoke())
+
+
+# ---------------------------------------------------------------------------
+# small talk: greetings/identity get a canned offline answer, never a run
+# ---------------------------------------------------------------------------
+def test_smalltalk_reply_covers_greetings_and_identity():
+    from harness.tui import smalltalk_reply
+
+    assert "Neuromancer" in smalltalk_reply("hi")
+    assert "Neuromancer" in smalltalk_reply("Who are you?")
+    assert "Neuromancer" in smalltalk_reply("  what are you?! ")
+    assert smalltalk_reply("how are you") is not None
+    # task-shaped input must fall through to the normal run path
+    assert smalltalk_reply("Fix the failing test in buggy.py") is None
+    assert smalltalk_reply("hi there, fix the bug in app.py") is None
+
+
+def test_tui_collect_mode_answers_smalltalk_without_starting_a_run(tmp_path):
+    from harness.tui import IssueTextArea
+
+    calls: list[str] = []
+
+    def collect(text: str) -> list[str]:
+        calls.append(text)
+        return [sys.executable, "-c", "pass"]
+
+    app = HarnessTUI(reports_root=tmp_path, cwd=tmp_path, collect_issue=collect)
+
+    async def smoke() -> None:
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            app.query_one("#issue-input", IssueTextArea).text = "who are you?"
+            await pilot.press("enter")
+            await pilot.pause(0.5)
+            rendered = str(app.query_one("#issue-error").render())
+            assert "Neuromancer" in rendered
+            assert "guarded-mini" in rendered
+            assert not calls, "small talk must never reach the run builder"
+            assert app._child is None
+            # the input stays editable and the next (real) task still runs
+            assert not app.query_one("#issue-input", IssueTextArea).disabled
             app.action_quit()
 
     asyncio.run(smoke())

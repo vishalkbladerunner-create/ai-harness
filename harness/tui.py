@@ -178,6 +178,33 @@ def git_snapshot(workspace: Path) -> dict | None:
 # ---------------------------------------------------------------------------
 # widgets
 # ---------------------------------------------------------------------------
+def smalltalk_reply(text: str) -> str | None:
+    """A canned, offline reply for greetings/identity questions in the input
+    screen. The harness is a task runner, not a chatbot — but 'hi' and
+    'who are you?' deserve an answer that costs no model call and starts no run.
+    Returns None for anything task-shaped (the normal path continues).
+    """
+    cleaned = " ".join(text.strip().lower().split()).rstrip("?!.")
+    if cleaned in {"hi", "hii", "hello", "helloo", "hey", "hey there", "hello there", "yo", "hola"}:
+        return (
+            "Hey! I'm Neuromancer — a guarded SWE harness built on mini-swe-agent. I don't chat,\n"
+            "but give me an issue and a target repo and I'll fix it. Try pasting something like\n"
+            "'Fix the failing test in buggy.py' with the workspace pointed at that repo."
+        )
+    if cleaned in {"who are you", "what are you", "who r you", "who are u", "what is this", "your name"}:
+        return (
+            "I'm Neuromancer (guarded-mini): an autonomous coding-agent harness. A foundation\n"
+            "model (DeepSeek/Qwen) does the engineering; I handle safety, context, verification\n"
+            "and evidence around it. Paste a task and point me at a repository to watch me work."
+        )
+    if cleaned in {"how are you", "how are you doing", "how's it going", "hows it going"}:
+        return (
+            "All systems green, thanks for asking. I'm a harness rather than a conversationalist —\n"
+            "paste an issue, point me at a repo, and I'll show you what I actually do."
+        )
+    return None
+
+
 class IssueTextArea(TextArea):
     """The collect-mode task box: multi-line paste, Enter submits.
 
@@ -518,6 +545,11 @@ class HarnessTUI(App):
         text = event.text.strip()
         if not text:
             self._issue_note("the issue text is empty — paste the task first")
+            return
+        reply = smalltalk_reply(text)
+        if reply is not None:
+            # Greetings/identity questions get a canned offline answer — never a run.
+            self._issue_guidance(reply)
             return
         self.query_one("#issue-input", IssueTextArea).disabled = True
         self._issue_note("preparing the run… (resolving the workspace)")
