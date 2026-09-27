@@ -4,7 +4,7 @@
 
 ### A guarded, evidence-first SWE harness with a local calibrated decision layer
 
-![tests](https://img.shields.io/badge/tests-185%20passing-brightgreen)
+![tests](https://img.shields.io/badge/tests-199%20passing-brightgreen)
 ![python](https://img.shields.io/badge/python-%E2%89%A5%203.10-blue)
 ![upstream](https://img.shields.io/badge/mini--swe--agent-v2.4.6%20pinned-orange)
 ![license](https://img.shields.io/badge/license-MIT-lightgrey)
@@ -327,7 +327,7 @@ laya), vendored core byte-identical to upstream v2.4.6 (`make check-upstream`). 
 │   ├── laya/                #   local judge adapter + heuristics fallback
 │   └── config/              # configuration: YAML, prompts, calibration (no secrets)
 ├── vendor/mini-swe-agent/   # vendored upstream core, byte-identical to v2.4.6
-├── tests/                   # 190 unit tests + fixture repo + mock model server
+├── tests/                   # 199 unit tests + fixture repo + mock model server
 ├── scripts/                 # setup, e2e (mock+live), smoke, doctor, calibration
 ├── docs/ARCHITECTURE.md     # line-by-line walkthrough of the loop and every hook
 ├── constraints.txt          # dependency pins (tested)
