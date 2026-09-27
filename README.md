@@ -11,6 +11,8 @@
 
 **Same model. Different harness. The engineering is the difference.**
 
+*Built by team **Neuromancer** — Vishal Kumar · Manav Garg · Karunesh Mahra*
+
 Built on [mini-swe-agent](https://github.com/SWE-agent/mini-swe-agent) (MIT, © the SWE-agent team),
 pinned at **v2.4.6** and vendored byte-identical under `vendor/mini-swe-agent/`.
 

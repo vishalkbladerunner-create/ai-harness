@@ -238,13 +238,13 @@ class HarnessTUI(App):
     #log {{ height: 1fr; border: solid {BRAND_DARK}; }}
     #graph-panel {{ width: 44%; border: solid {BRAND_BRIGHT}; padding: 0 1; }}
     #status {{ height: 1; }}
-    #issue-view {{ height: 1fr; align: center middle; }}
+    #issue-view {{ height: 1fr; align: center middle; overflow-y: auto; }}
     #issue-box {{ width: 84; max-width: 90%; height: auto; border: solid {BRAND_BRIGHT}; padding: 1 2; }}
     #issue-brand {{ content-align: center middle; }}
     #issue-prompt {{ margin-top: 1; }}
-    #issue-input {{ height: 12; border: solid {BRAND_DARK}; margin: 1 0; }}
-    #issue-hint {{ color: $text-muted; }}
-    #issue-error {{ height: auto; color: $error; margin-top: 1; }}
+    #issue-error {{ height: auto; max-height: 5; color: $error; margin-top: 1; }}
+    #issue-input {{ height: 6; border: solid {BRAND_DARK}; margin-top: 1; }}
+    #issue-hint {{ color: $text-muted; margin-top: 1; }}
     .hidden {{ display: none; }}
     """
     BINDINGS = [
@@ -306,7 +306,9 @@ class HarnessTUI(App):
     def compose(self) -> ComposeResult:
         collect = self._collect_issue is not None
         yield Header()
-        with Horizontal(id="titlebar"):
+        # The titlebar (brand + graph toggle) only serves the live view; hiding
+        # it in collect mode lets the input screen fit an 80x24 terminal.
+        with Horizontal(id="titlebar", classes="hidden" if collect else None):
             yield Static(Text.from_markup(logo_markup()), id="brand")
             yield Button("⬡ Graph", id="toggle-graph")
         with Horizontal(id="body", classes="hidden" if collect else None):
@@ -319,9 +321,11 @@ class HarnessTUI(App):
             with Vertical(id="issue-box"):
                 yield Static(Text.from_markup(logo_markup()), id="issue-brand")
                 yield Static("Paste the evaluation issue / test case below, then press Enter.", id="issue-prompt")
+                # The note sits above the input so it stays visible even on a
+                # small (80x24) terminal, where the box can outgrow the view.
+                yield Static("", id="issue-error")
                 yield IssueTextArea(id="issue-input")
                 yield Static("Enter runs the harness · multi-line paste is fine · Ctrl-Q quits", id="issue-hint")
-                yield Static("", id="issue-error")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -482,6 +486,7 @@ class HarnessTUI(App):
         """The issue is collected and staged: swap the input view for the live view."""
         self._child_argv = argv
         self.query_one("#issue-view").add_class("hidden")
+        self.query_one("#titlebar").remove_class("hidden")
         self.query_one("#body").remove_class("hidden")
         self.query_one("#status").remove_class("hidden")
         self._state["status"] = "starting"

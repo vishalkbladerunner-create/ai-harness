@@ -212,11 +212,10 @@ def _launch_tui(args, options: RunOptions | None, issue) -> int | None:
 
 
 CONNECT_API_MESSAGE = (
-    "[bold]Connect the API first.[/bold]\n"
-    "Run this command with your API key, then submit again:\n\n"
-    "  [bold]export AI_API_KEY=<your-api-key>[/bold]\n\n"
-    "[dim]We only support the official DeepSeek and Qwen APIs right now — the harness "
-    "automatically detects which one your key belongs to (try 'make doctor' to check).[/dim]"
+    "[bold]Connect the API first.[/bold] Run this with your key, then submit again:\n"
+    "  [bold]export AI_API_KEY=<your-key>[/bold]\n"
+    "[dim]Only the official DeepSeek and Qwen APIs are supported right now — the harness "
+    "detects which one your key belongs to automatically.[/dim]"
 )
 
 
