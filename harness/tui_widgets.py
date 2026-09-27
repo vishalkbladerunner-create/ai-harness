@@ -19,20 +19,25 @@ from rich.text import Text
 from rich.tree import Tree
 
 from harness.theme import (
+    BRAND_BORDER,
     BRAND_BRIGHT,
     BRAND_DARK,
     BRAND_FAIL,
     BRAND_MID,
     BRAND_PASS,
+    BRAND_SKY,
+    BRAND_TEXT,
     BRAND_TRACK,
+    BRAND_WHITE,
     status_style,
 )
 
 BAR_WIDTH = 28
-#: name, colour, what the row means (kept visible in the caption).
+#: name, colour, what the row means (kept visible in the caption). Colours are
+#: the text-safe set: they must stay readable on a dark terminal.
 SECTIONS = (
-    ("system", BRAND_DARK, "system prompt"),
-    ("tools", BRAND_BRIGHT, "bash schema + sentinel docs"),
+    ("system", BRAND_BORDER, "system prompt"),
+    ("tools", BRAND_SKY, "bash schema + sentinel docs"),
     ("messages", BRAND_MID, "conversation"),
     ("free", BRAND_TRACK, "free window"),
 )
@@ -79,7 +84,7 @@ def context_split_panel(
     else:
         heading = f"{title}  {total:,} tok  (window unknown)"
 
-    table = Table(title=heading, title_style=f"bold {BRAND_DARK}", show_header=False, pad_edge=False)
+    table = Table(title=heading, title_style=f"bold {BRAND_SKY}", show_header=False, pad_edge=False)
     table.add_column("section", width=9)
     table.add_column("bar", width=BAR_WIDTH, no_wrap=True)
     table.add_column("tokens", justify="right", width=9)
@@ -91,14 +96,14 @@ def context_split_panel(
         else:
             count = int(split.get(name) or 0)
             fraction = (count / limit) if limit else 0.0
-        label = Text(name, style=f"bold {color}" if name != "free" else f"bold {BRAND_DARK}")
+        label = Text(name, style=f"bold {color}" if name != "free" else f"bold {BRAND_TEXT}")
         table.add_row(label, _bar(fraction, color), Text(f"{count:,}", style="dim"))
 
     captions: list[Text] = []
     method = split.get("method") or "tiktoken:cl100k_base"
     legend = Text()
     legend.append("sections: ", style="dim")
-    legend.append("system", style=BRAND_DARK)
+    legend.append("system", style=BRAND_BORDER)
     legend.append(" · ", style="dim")
     legend.append("tools", style=BRAND_BRIGHT)
     legend.append(" (bash schema + sentinel docs) · ", style="dim")
@@ -131,12 +136,12 @@ def event_line(event: dict) -> Text:
 
     if kind == "run_start":
         issue = event.get("issue") or {}
-        line.append("run start ", style=f"bold {BRAND_DARK}")
+        line.append("run start ", style=f"bold {BRAND_SKY}")
         line.append(f"· {_clip(issue.get('title') or issue.get('source') or 'issue', 70)}", style="dim")
     elif kind == "run_end":
         status = str(event.get("status") or "?")
         stats = event.get("stats") or {}
-        line.append("run end ", style=f"bold {BRAND_DARK}")
+        line.append("run end ", style=f"bold {BRAND_SKY}")
         line.append(status.upper(), style=f"bold {status_style(status)}")
         line.append(
             f" · steps {stats.get('steps', 0)} · tokens {int(stats.get('total_tokens') or 0):,}"
@@ -146,7 +151,7 @@ def event_line(event: dict) -> Text:
     elif kind == "model_call":
         usage = event.get("usage") or {}
         split = event.get("context_split") or {}
-        line.append("model ", style=f"bold {BRAND_DARK}")
+        line.append("model ", style=f"bold {BRAND_SKY}")
         line.append(f"{int(usage.get('total_tokens') or 0):,} tok", style=BRAND_BRIGHT)
         if split:
             line.append(
@@ -162,13 +167,13 @@ def event_line(event: dict) -> Text:
     elif kind == "command":
         policy = event.get("policy") or {}
         decision = str(event.get("decision") or policy.get("outcome") or "?")
-        color = {"allow": BRAND_DARK, "refuse": BRAND_FAIL, "ask": BRAND_BRIGHT}.get(decision, BRAND_DARK)
+        color = {"allow": BRAND_TEXT, "refuse": BRAND_FAIL, "ask": BRAND_SKY}.get(decision, BRAND_TEXT)
         line.append(f"{decision:>6} ", style=f"bold {color}")
         line.append(_clip(event.get("command"), 76), style="")
         line.append(f" · rc {event.get('returncode', '?')} · {event.get('duration_s', 0)}s", style="dim")
     elif kind == "guardrail":
         outcome = str(event.get("outcome") or "?")
-        color = {"allow": BRAND_DARK, "refuse": BRAND_FAIL, "ask": BRAND_BRIGHT}.get(outcome, BRAND_DARK)
+        color = {"allow": BRAND_TEXT, "refuse": BRAND_FAIL, "ask": BRAND_SKY}.get(outcome, BRAND_TEXT)
         line.append("guardrail ", style=f"bold {color}")
         line.append(outcome, style=color)
         probability = event.get("probability")
@@ -179,12 +184,12 @@ def event_line(event: dict) -> Text:
         line.append(f" · {_clip(event.get('reason'), 60)}", style="dim")
     elif kind == "verification":
         ok = bool(event.get("ok"))
-        line.append("verify ", style=f"bold {BRAND_DARK}")
+        line.append("verify ", style=f"bold {BRAND_SKY}")
         line.append("PASS" if ok else "FAIL", style=f"bold {BRAND_PASS if ok else BRAND_FAIL}")
         line.append(f" · {_clip(event.get('command'), 50)} · {event.get('duration_s', 0)}s", style="dim")
     elif kind == "compaction":
         shadow = bool(event.get("shadow"))
-        line.append("compaction ", style=f"bold {BRAND_DARK}")
+        line.append("compaction ", style=f"bold {BRAND_SKY}")
         line.append("shadow" if shadow else "live", style=BRAND_BRIGHT)
         line.append(
             f" · {int(event.get('tokens_before') or 0):,}→{int(event.get('tokens_after') or 0):,} tok"
@@ -194,7 +199,7 @@ def event_line(event: dict) -> Text:
         )
     elif kind == "injection_scan":
         flagged = bool(event.get("flagged"))
-        line.append("injection scan ", style=f"bold {BRAND_DARK}")
+        line.append("injection scan ", style=f"bold {BRAND_SKY}")
         line.append("FLAGGED" if flagged else "clean", style=f"bold {BRAND_FAIL if flagged else BRAND_PASS}")
         line.append(f" · {_clip(event.get('where'), 60)}", style="dim")
     elif kind in {"degradation", "error", "budget_exhausted", "verification_failed_after_submit"}:
@@ -205,13 +210,13 @@ def event_line(event: dict) -> Text:
         line.append("provider fallback ", style=f"bold {BRAND_BRIGHT}")
         line.append(f"{event.get('previous_model')} → {event.get('model')}", style="dim")
     elif kind == "workspace_changes":
-        line.append("workspace changes ", style=f"bold {BRAND_DARK}")
+        line.append("workspace changes ", style=f"bold {BRAND_SKY}")
         line.append(_clip(event.get("note"), 70), style="dim")
     elif kind == "submit_patch":
         line.append("submit patch ", style=f"bold {BRAND_PASS}")
         line.append(f"{event.get('bytes', 0):,} bytes", style="dim")
     else:
-        line.append(kind.replace("_", " ") + " ", style=f"bold {BRAND_DARK}")
+        line.append(kind.replace("_", " ") + " ", style=f"bold {BRAND_SKY}")
         picked = " ".join(
             _clip(value, 40)
             for key, value in event.items()
@@ -224,9 +229,9 @@ def event_line(event: dict) -> Text:
 def status_line(state: dict) -> Text:
     """The one-line status bar under the panels (brand palette only)."""
     line = Text()
-    line.append(" guarded-mini ", style=f"bold {BRAND_BRIGHT} on {BRAND_DARK}")
+    line.append(" guarded-mini ", style=f"bold {BRAND_WHITE} on {BRAND_DARK}")
     status = str(state.get("status") or "starting")
-    line.append(f" {status}", style=f"bold {status_style(status)} on {BRAND_DARK}")
+    line.append(f" {status} ", style=f"bold {status_style(status)} on {BRAND_TRACK}")
     parts = []
     if state.get("steps") is not None:
         max_steps = state.get("max_steps") or 0
@@ -259,7 +264,7 @@ def repo_graph(root_label: str, files: list[str], changed: set[str], *, max_node
     Pure function over a file list so it is testable; the caller gets the list
     from git (see ``harness/tui.py``).
     """
-    tree = Tree(f"[bold {BRAND_DARK}]{root_label or 'workspace'}[/]")
+    tree = Tree(f"[bold {BRAND_SKY}]{root_label or 'workspace'}[/]")
     directories: dict[tuple[str, ...], Tree] = {}
     for relative in files[:max_nodes]:
         parts = [part for part in relative.split("/") if part]
@@ -270,10 +275,10 @@ def repo_graph(root_label: str, files: list[str], changed: set[str], *, max_node
         for part in parts[:-1]:
             key += (part,)
             if key not in directories:
-                directories[key] = parent.add(f"[{BRAND_BRIGHT}]{part}/[/]")
+                directories[key] = parent.add(f"[{BRAND_MID}]{part}/[/]")
             parent = directories[key]
         if relative in changed:
-            parent.add(f"[bold {BRAND_BRIGHT}]{parts[-1]}[/]", style="reverse")
+            parent.add(f"[bold {BRAND_SKY}]{parts[-1]}[/]", style="reverse")
         else:
             parent.add(parts[-1])
     if not files:

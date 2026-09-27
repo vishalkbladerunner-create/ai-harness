@@ -181,9 +181,7 @@ def test_tui_replays_a_finished_run(tmp_path):
             assert app._saved == 1100 and app._passes == 1
             assert app._state["status"] == "submitted"
             assert len(app.query_one("#log").lines) >= len(events)
-            from harness.theme import logo_lines
-
-            assert logo_lines()[0] in str(app.query_one("#brand").render())
+            assert "NEUROMANCER" in str(app.query_one("#brand").render())
             assert not app.query_one("#graph-panel").has_class("hidden")
             app.action_toggle_graph()
             await pilot.pause()

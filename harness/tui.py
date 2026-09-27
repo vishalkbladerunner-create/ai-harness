@@ -42,7 +42,15 @@ from textual.message import Message
 from textual.widgets import Button, Footer, Header, RichLog, Static, TextArea
 
 from harness import HARNESS_NAME
-from harness.theme import BRAND_BRIGHT, BRAND_DARK, BRAND_WHITE, logo_markup
+from harness.theme import (
+    BRAND_BORDER,
+    BRAND_BRIGHT,
+    BRAND_DARK,
+    BRAND_SKY,
+    BRAND_TEXT,
+    BRAND_WHITE,
+    logo_markup,
+)
 from harness.tui_widgets import context_split_panel, event_line, repo_graph, status_line
 
 TELEMETRY_NAME = "telemetry.jsonl"
@@ -206,8 +214,8 @@ class GraphPanel(Static):
 
     def refresh_from(self, workspace: Path | None) -> None:
         if workspace is None:
-            self.border_title = "workspace (unknown)"
-            self.update(repo_graph("workspace", [], set()))
+            self.border_title = "workspace (waiting…)"
+            self.update(Text("the project graph appears once the run starts", style="dim"))
             return
         snapshot = git_snapshot(workspace)
         if snapshot is None:
@@ -271,21 +279,21 @@ class HarnessTUI(App):
     SUB_TITLE = "live view over telemetry.jsonl"
     CSS = f"""
     Screen {{ background: $surface; }}
-    #titlebar {{ height: 5; }}
+    #titlebar {{ height: 3; }}
     #brand {{ width: 1fr; content-align: left middle; padding: 0 1; }}
     #toggle-graph {{ width: 14; margin: 1 1 0 0; background: {BRAND_DARK}; color: {BRAND_WHITE}; }}
     #body {{ height: 1fr; }}
     #main {{ width: 1fr; }}
     #context-panel {{ height: auto; border: solid {BRAND_BRIGHT}; padding: 0 1; }}
-    #log {{ height: 1fr; border: solid {BRAND_DARK}; }}
+    #log {{ height: 1fr; border: solid {BRAND_BORDER}; }}
     #graph-panel {{ width: 44%; border: solid {BRAND_BRIGHT}; padding: 0 1; }}
     #status {{ height: 1; }}
     #issue-view {{ height: 1fr; align: center middle; overflow-y: auto; }}
     #issue-box {{ width: 84; max-width: 90%; height: auto; border: solid {BRAND_BRIGHT}; padding: 1 2; }}
     #issue-brand {{ content-align: center middle; }}
-    #issue-prompt {{ margin-top: 1; }}
+    #issue-prompt {{ margin-top: 1; color: {BRAND_TEXT}; }}
     #issue-error {{ height: auto; max-height: 6; color: $error; margin-top: 1; }}
-    #issue-input {{ height: 6; border: solid {BRAND_DARK}; margin-top: 1; }}
+    #issue-input {{ height: 6; border: solid {BRAND_BORDER}; margin-top: 1; }}
     #issue-hint {{ color: $text-muted; margin-top: 1; }}
     .hidden {{ display: none; }}
     """
@@ -356,7 +364,10 @@ class HarnessTUI(App):
         # The titlebar (brand + graph toggle) only serves the live view; hiding
         # it in collect mode lets the input screen fit an 80x24 terminal.
         with Horizontal(id="titlebar", classes="hidden" if collect else None):
-            yield Static(Text.from_markup(logo_markup()), id="brand")
+            yield Static(
+                Text.assemble(("⬡ NEUROMANCER", f"bold {BRAND_SKY}"), (" · guarded-mini", "dim")),
+                id="brand",
+            )
             yield Button("⬡ Graph", id="toggle-graph")
         with Horizontal(id="body", classes="hidden" if collect else None):
             with Vertical(id="main"):
@@ -601,10 +612,12 @@ class HarnessTUI(App):
         self.query_one("#status", Static).update(status_line(self._state))
 
     def _brand(self, text: str) -> None:
-        """Wordmark + the run/issue line under it (brand palette only)."""
-        content = Text.from_markup(logo_markup())
+        """Compact wordmark + the run/issue line under it (readable on dark)."""
+        content = Text()
+        content.append("⬡ NEUROMANCER", style=f"bold {BRAND_SKY}")
+        content.append(" · guarded-mini", style="dim")
         content.append("\n")
-        content.append(f"⬡ {text}", style=BRAND_DARK)
+        content.append(text, style=BRAND_TEXT)
         self.query_one("#brand", Static).update(content)
 
     def _set_status(self, status: str) -> None:

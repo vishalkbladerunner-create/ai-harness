@@ -7,9 +7,10 @@ hard-coding hex values, so re-branding is a one-file change. Green/red are
 reserved for pass/fail semantics only; everything else is navy/blue/white.
 
 Team: Neuromancer (named after the William Gibson novel). The wordmark is a
-two-line half-block banner: bright blue on top, navy below — the same two-tone
-as the original shield mark, and narrow enough (47 columns) for an 80-column
-terminal and for the report header.
+two-line half-block banner: sky blue on top, mid blue below — the same two-tone
+as the original shield mark, lightened so both lines stay readable on dark
+terminals, and narrow enough (47 columns) for an 80-column terminal and for the
+report header.
 
 No Rich import at module level: the report path (`banner_for_report`) must keep
 working even when the optional TUI dependencies are absent. `header_panel`
@@ -23,13 +24,18 @@ import re
 # ---------------------------------------------------------------------------
 # Palette (sampled from the team mark)
 # ---------------------------------------------------------------------------
-BRAND_DARK = "#013E75"    # navy — shield body, borders, panel titles
+BRAND_DARK = "#013E75"    # navy — shield body, backgrounds behind light text
 BRAND_BRIGHT = "#0179D0"  # bright blue — logo highlight, active elements
 BRAND_WHITE = "#FFFFFF"   # page/panel background
-BRAND_MID = "#5B8FD6"     # messages segment (context bar)
+BRAND_MID = "#5B8FD6"     # messages segment (context bar), logo lower line
 BRAND_TRACK = "#C9D4E0"   # free space / empty bar track
 BRAND_PASS = "#1B8A4B"    # pass semantics only
 BRAND_FAIL = "#C0392B"    # fail semantics only
+# Text-safe colours for DARK terminal backgrounds: BRAND_DARK/BRAND_BRIGHT are
+# too dim to read on black, so on-screen labels use these instead.
+BRAND_SKY = "#5CB3FF"     # sky blue — labels, headings, accents on dark
+BRAND_TEXT = "#D8E6F5"    # soft near-white — body text on dark
+BRAND_BORDER = "#2A5C8F"  # panel borders on dark (quiet but visible)
 
 #: Panel title for the startup header / report header.
 BRAND_TITLE = "NEUROMANCER · guarded-mini"
@@ -46,10 +52,11 @@ _LOGO_ROWS: tuple[str, ...] = (
     "█░▀█ ██▄ █▄█ █▀▄ █▄█ █░▀░█ █▀█ █░▀█ █▄▄ ██▄ █▀▄",
 )
 
-#: Rich markup version: bright blue top line, navy bottom line (the mark's
-#: two-tone). Renderable by any Rich console; strip with `logo_plain()`.
+#: Rich markup version: bright blue top line, mid blue bottom line (the mark's
+#: two-tone, lightened so both lines stay readable on dark terminals).
+#: Renderable by any Rich console; strip with `logo_plain()`.
 ASCII_LOGO = "\n".join(
-    f"[{BRAND_BRIGHT}]{row}[/]" if index == 0 else f"[{BRAND_DARK}]{row}[/]"
+    f"[{BRAND_SKY}]{row}[/]" if index == 0 else f"[{BRAND_MID}]{row}[/]"
     for index, row in enumerate(_LOGO_ROWS)
 )
 
@@ -89,9 +96,9 @@ def header_panel(*, quote: bool = False, subtitle: str = BRAND_SUBTITLE):
         body.append(BRAND_QUOTE, style="italic dim")
     return Panel(
         body,
-        title=f"[{BRAND_DARK} bold]{BRAND_TITLE}[/]",
+        title=f"[{BRAND_SKY} bold]{BRAND_TITLE}[/]",
         subtitle=f"[{BRAND_BRIGHT}]{subtitle}[/]",
-        border_style=BRAND_BRIGHT,
+        border_style=BRAND_BORDER,
         padding=(0, 2),
     )
 

@@ -12,11 +12,12 @@ def test_wordmark_is_a_compact_banner():
     assert all(line.strip() for line in lines)
 
 
-def test_wordmark_uses_both_brand_colors_and_strips_cleanly():
+def test_wordmark_uses_readable_brand_colors_and_strips_cleanly():
     markup = theme.logo_markup()
-    assert theme.BRAND_BRIGHT in markup and theme.BRAND_DARK in markup
+    # the two-tone wordmark must use the text-safe colours (readable on dark)
+    assert theme.BRAND_SKY in markup and theme.BRAND_MID in markup
     plain = theme.logo_plain()
-    assert "[" not in plain and "#0179D0" not in plain
+    assert "[" not in plain and "#" not in plain
     assert plain.splitlines() == theme.logo_lines()
 
 
@@ -24,7 +25,7 @@ def test_header_panel_carries_brand_title_and_subtitle():
     panel = theme.header_panel()
     assert panel is not None
     assert theme.BRAND_TITLE in panel.title
-    assert theme.BRAND_BRIGHT in str(panel.border_style)
+    assert theme.BRAND_BORDER in str(panel.border_style)
 
 
 def test_status_style_reserves_green_and_red_for_pass_fail():
